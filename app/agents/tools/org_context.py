@@ -400,9 +400,9 @@ inform them they can use the main assistant to fetch URLs."""
     def as_tool(
         self,
         name: str = "org_context",
-        description: str = "Retrieve organizational context from the knowledge base (instructions, notes, indexed URLs). Use this tool when you need to understand organizational context, team structure, processes, or find documented information.",
+        description: str = "Search stored knowledge, notes, and org context. Use when the user asks about documented information.",
         arg_name: str = "query",
-        arg_description: str = "A question or topic to find organizational context for."
+        arg_description: str = "The question or topic to search for."
     ):
         """Convert this agent to a tool that can be used by other agents.
         

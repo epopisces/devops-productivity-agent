@@ -153,6 +153,10 @@ You: Is there anything useful at https://kubernetes.io/docs/concepts/overview/ f
   - Org Context: ~65% reduction — merged duplicate strategy/behavior sections
   - Knowledge Ingestion: ~55% reduction — replaced verbose guidelines with routing table
   - URL Scraper: ~70% reduction — stripped to essentials
+- **Fixed**: qwen3:4b outputting tool calls as text instead of invoking them
+  - Simplified `as_tool()` descriptions on all three tool agents (shorter = fewer tokens for small models to parse)
+  - Removed routing hints from coordinator prompt that small models took literally (e.g., passing just "createnote" instead of the full user request)
+  - Added raw JSON leak pattern to `_strip_tool_call_leaks()` for qwen3-style output
 
 ### 2026-02-12 (Claude Opus 4.6)
 - **Changed**: Reorganized knowledge folder structure for unified knowledge management

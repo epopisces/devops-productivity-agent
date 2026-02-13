@@ -25,6 +25,7 @@ _TOOL_CALL_LEAK_PATTERNS = [
     re.compile(r"<\|python_tag\|>\s*\{.*", re.DOTALL),       # Llama-family
     re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL),     # Generic XML
     re.compile(r"<\|tool_call\|>.*?<\|/tool_call\|>", re.DOTALL),  # ChatML variants
+    re.compile(r'\{"name"\s*:\s*"(?:url_scraper|knowledge_ingestion|org_context)".*', re.DOTALL),  # Raw JSON (qwen3)
 ]
 
 

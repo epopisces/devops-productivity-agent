@@ -587,9 +587,9 @@ class KnowledgeIngestionAgent:
     def as_tool(
         self,
         name: str = "knowledge_ingestion",
-        description: str = "Process and store content in organizational knowledge stores. Use this tool when users share context about themselves, their role, their workflow, tools they use, or organizational information. User/role context goes to the INSTRUCTIONS FILE. Detailed documentation goes to NOTES.",
+        description: str = "Save content to the knowledge base. Use when the user wants to store a URL, save information, or record notes.",
         arg_name: str = "request",
-        arg_description: str = "A request describing what content to ingest. For user context (role, skills, tools, workflow), specify 'update instructions file'. For detailed docs, specify 'create note'."
+        arg_description: str = "The full user request including all details, URLs, titles, and context to save."
     ):
         """Convert this agent to a tool that can be used by other agents.
         

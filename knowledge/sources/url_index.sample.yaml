@@ -13,6 +13,7 @@ urls:
     agents. Features modular plugin architecture, flexible model configuration (Ollama,
     hosted APIs, Azure AI Foundry), and knowledge management capabilities.
   tags:
+  - ai
   - python
   - agents
   - ollama

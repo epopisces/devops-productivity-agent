@@ -199,9 +199,9 @@ class URLScraperAgent:
     def as_tool(
         self,
         name: str = "url_scraper",
-        description: str = "Fetch and analyze content from a URL. Use this tool when you need to retrieve and understand web page content.",
+        description: str = "Fetch and summarize a web page. Use when the user provides a URL to analyze.",
         arg_name: str = "request",
-        arg_description: str = "A request describing what URL to fetch and optionally what to look for in the content."
+        arg_description: str = "The URL to fetch and what to look for."
     ):
         """Convert this agent to a tool that can be used by other agents.
         
