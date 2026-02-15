@@ -1,6 +1,17 @@
-"""Agents package for Multi-Agent Workflow."""
+"""Agents package for the workflow-based architecture.
 
-from .coordinator import CoordinatorAgent
-from .tools.url_scraper import URLScraperAgent
+New agents:
+- TriageExecutor: Classifies user intent and extracts metadata
+- QuestionHandlerExecutor: Answers questions from knowledge context
+- IngestionPreviewExecutor: Proposes knowledge-base writes
+"""
 
-__all__ = ["CoordinatorAgent", "URLScraperAgent"]
+from .triage import TriageExecutor
+from .question_handler import QuestionHandlerExecutor
+from .ingestion_preview import IngestionPreviewExecutor
+
+__all__ = [
+    "TriageExecutor",
+    "QuestionHandlerExecutor",
+    "IngestionPreviewExecutor",
+]

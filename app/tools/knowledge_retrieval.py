@@ -1,7 +1,7 @@
 """Knowledge Retrieval Tool Functions.
 
-Traditional (non-agent) tool functions for querying the knowledge base.
-These are lightweight, direct functions — not agent-as-tool wrappers.
+Read-only queries against the knowledge base indexes.
+These are lightweight, direct functions — not agent wrappers.
 
 Functions:
 - get_available_tags: Collect all unique tags from notes index and URL index.
@@ -45,6 +45,8 @@ class KnowledgeMatch:
     source_type: str  # "note" or "url"
     title: str
     summary: str
+    confidence: float = 1.0
+    relevance: float = 1.0
     tags: list[str] = field(default_factory=list)
     # Note-specific
     filename: str | None = None
@@ -53,6 +55,26 @@ class KnowledgeMatch:
     # URL-specific
     url: str | None = None
 
+    def to_dict(self) -> dict:
+        """Convert to a serializable dict."""
+        d = {
+            "source_type": self.source_type,
+            "title": self.title,
+            "summary": self.summary,
+            "confidence": self.confidence,
+            "relevance": self.relevance,
+            "tags": self.tags,
+        }
+        if self.filename:
+            d["filename"] = self.filename
+        if self.domain:
+            d["domain"] = self.domain
+        if self.category:
+            d["category"] = self.category
+        if self.url:
+            d["url"] = self.url
+        return d
+
 
 # ============================================================================
 # Helpers
@@ -60,7 +82,7 @@ class KnowledgeMatch:
 
 def _get_project_root() -> Path:
     """Get the project root directory."""
-    return Path(__file__).parent.parent.parent.parent
+    return Path(__file__).parent.parent.parent
 
 
 def _load_notes_index() -> list[dict]:
@@ -112,8 +134,7 @@ def get_available_tags() -> str:
     """Get all unique tags across the knowledge base (notes and URLs).
 
     Returns a formatted list of tags with counts showing how many notes
-    and URLs use each tag.  This is useful for discovering what knowledge
-    is available before doing a targeted search.
+    and URLs use each tag.
 
     Returns:
         Formatted string of available tags with source counts.
@@ -144,7 +165,6 @@ def get_available_tags() -> str:
             logger.info("[TOOL RESULT] get_available_tags: no tags found")
             return "No tags found in the knowledge base."
 
-        # Sort by total count descending, then alphabetically
         sorted_tags = sorted(
             tag_map.values(),
             key=lambda t: (-t.total_count, t.tag),
@@ -168,14 +188,72 @@ def get_available_tags() -> str:
         return f"Error retrieving tags: {e}"
 
 
+def search_by_tags_structured(tags: list[str]) -> list[KnowledgeMatch]:
+    """Internal: search by tags and return structured KnowledgeMatch objects.
+
+    This is used by the workflow executors (KnowledgeLookup) which need
+    structured data, not the formatted string version.
+
+    Args:
+        tags: List of tag strings to search for.
+
+    Returns:
+        List of KnowledgeMatch objects.
+    """
+    search_tags = {t.strip().lower() for t in tags if t.strip()}
+    if not search_tags:
+        return []
+
+    notes = _load_notes_index()
+    urls = _load_url_index()
+    config = get_config()
+    matches: list[KnowledgeMatch] = []
+
+    for note in notes:
+        note_tags = {t.lower().strip() for t in note.get("tags", [])}
+        if search_tags & note_tags:
+            topic_dir = None
+            for _topic, topic_config in config.knowledge.notes_topics.items():
+                topic_dir = topic_config.directory
+                break
+            filepath = f"{topic_dir}/{note.get('filename', '')}" if topic_dir else note.get("filename", "")
+
+            matches.append(KnowledgeMatch(
+                source_type="note",
+                title=note.get("title", "Untitled"),
+                summary=note.get("summary", ""),
+                confidence=note.get("confidence", 1.0),
+                relevance=note.get("relevance", 1.0),
+                tags=sorted(note_tags),
+                filename=filepath,
+                domain=note.get("domain"),
+                category=note.get("category"),
+            ))
+
+    for url_entry in urls:
+        url_tags = {t.lower().strip() for t in url_entry.get("tags", [])}
+        if search_tags & url_tags:
+            matches.append(KnowledgeMatch(
+                source_type="url",
+                title=url_entry.get("title", "Untitled"),
+                summary=url_entry.get("summary", ""),
+                confidence=url_entry.get("confidence", 1.0),
+                relevance=url_entry.get("relevance", 1.0),
+                tags=sorted(url_tags),
+                url=url_entry.get("url"),
+                domain=url_entry.get("domain"),
+            ))
+
+    return matches
+
+
 @track_tool_call("knowledge_retrieval")
 def search_by_tags(
     tags: Annotated[str, Field(description="Comma-separated list of tags to search for (e.g., 'python,agents')")],
 ) -> str:
     """Search the knowledge base for notes and URLs matching one or more tags.
 
-    Returns file paths (for notes) or URLs with their summaries for every
-    item that has at least one of the requested tags.
+    Returns file paths (for notes) or URLs with their summaries.
 
     Args:
         tags: Comma-separated tag names to search for.
@@ -186,57 +264,15 @@ def search_by_tags(
     logger.info(f"[TOOL CALL] search_by_tags: {tags}")
 
     try:
-        search_tags = {t.strip().lower() for t in tags.split(",") if t.strip()}
-        if not search_tags:
-            return "No tags provided. Pass a comma-separated list of tags to search for."
-
-        notes = _load_notes_index()
-        urls = _load_url_index()
-        config = get_config()
-        matches: list[KnowledgeMatch] = []
-
-        # Match notes
-        for note in notes:
-            note_tags = {t.lower().strip() for t in note.get("tags", [])}
-            matched_tags = search_tags & note_tags
-            if matched_tags:
-                # Determine the file path relative to project root
-                # Notes live under the topic directory
-                topic_dir = None
-                for _topic, topic_config in config.knowledge.notes_topics.items():
-                    topic_dir = topic_config.directory
-                    break  # use first match for path display
-                filepath = f"{topic_dir}/{note.get('filename', '')}" if topic_dir else note.get("filename", "")
-
-                matches.append(KnowledgeMatch(
-                    source_type="note",
-                    title=note.get("title", "Untitled"),
-                    summary=note.get("summary", ""),
-                    tags=sorted(note_tags),
-                    filename=filepath,
-                    domain=note.get("domain"),
-                    category=note.get("category"),
-                ))
-
-        # Match URLs
-        for url_entry in urls:
-            url_tags = {t.lower().strip() for t in url_entry.get("tags", [])}
-            matched_tags = search_tags & url_tags
-            if matched_tags:
-                matches.append(KnowledgeMatch(
-                    source_type="url",
-                    title=url_entry.get("title", "Untitled"),
-                    summary=url_entry.get("summary", ""),
-                    tags=sorted(url_tags),
-                    url=url_entry.get("url"),
-                    domain=url_entry.get("domain"),
-                ))
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        matches = search_by_tags_structured(tag_list)
 
         if not matches:
+            search_tags = {t.strip().lower() for t in tag_list}
             logger.info(f"[TOOL RESULT] search_by_tags: no matches for {search_tags}")
             return f"No knowledge items found matching tags: {', '.join(sorted(search_tags))}"
 
-        # Format output
+        search_tags = {t.strip().lower() for t in tag_list}
         lines = [f"=== Knowledge matching tags: {', '.join(sorted(search_tags))} ===\n"]
 
         note_matches = [m for m in matches if m.source_type == "note"]

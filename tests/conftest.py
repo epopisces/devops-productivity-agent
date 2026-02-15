@@ -11,20 +11,28 @@ def mock_config():
     """Create a mock configuration for testing."""
     return AppConfig(
         models=ModelsConfig(
+            provider="ollama",
             ollama=OllamaConfig(
                 host="http://localhost:11434",
                 model_id="test-model"
             )
         ),
         agents=AgentsConfig(
-            coordinator=AgentConfig(
-                name="TestCoordinator",
-                description="Test coordinator"
+            triage=AgentConfig(
+                name="TestTriage",
+                description="Test triage",
+                instructions_file="config/instructions/triage.md",
             ),
-            url_scraper=AgentConfig(
-                name="TestScraper",
-                description="Test scraper"
-            )
+            question_handler=AgentConfig(
+                name="TestQuestionHandler",
+                description="Test question handler",
+                instructions_file="config/instructions/question_handler.md",
+            ),
+            ingestion_preview=AgentConfig(
+                name="TestIngestionPreview",
+                description="Test ingestion preview",
+                instructions_file="config/instructions/ingestion_preview.md",
+            ),
         ),
         scraper=ScraperConfig(
             timeout=10,

@@ -13,10 +13,11 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-from app.agents.coordinator import CoordinatorAgent
 from app.config import get_config, load_config, reload_config, AppConfig
 from app.logging_config import setup_logging, LOGGER_ROOT
 from app.metrics import configure_metrics, get_metrics_collector
+from app.models import WorkflowOutput, QuestionResult, IngestionPreviewResult
+from app.workflows import build_workflow
 
 # Page configuration - must be first Streamlit command
 st.set_page_config(
@@ -42,8 +43,8 @@ def init_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
-    if "coordinator" not in st.session_state:
-        st.session_state.coordinator = None
+    if "workflow" not in st.session_state:
+        st.session_state.workflow = None
     
     if "config" not in st.session_state:
         st.session_state.config = None
@@ -99,8 +100,8 @@ def initialize_app():
         )
         st.session_state.metrics_enabled = config.metrics.enabled
         
-        # Initialize coordinator
-        st.session_state.coordinator = CoordinatorAgent()
+        # Initialize workflow
+        st.session_state.workflow = build_workflow()
         st.session_state.initialized = True
         
         logger.info("Streamlit app initialized successfully")
@@ -196,49 +197,172 @@ def set_log_level(level: str):
     logger.info(f"Log level changed to {level}")
 
 
-async def process_message(user_input: str) -> str:
-    """Process a user message and return the response."""
+async def process_message(user_input: str) -> list[WorkflowOutput]:
+    """Process a user message through the workflow and return outputs."""
     config = st.session_state.config
-    coordinator = st.session_state.coordinator
+    workflow = st.session_state.workflow
     metrics_collector = get_metrics_collector()
     
     start_time = time.time()
-    output_text = ""
-    chunk_count = 0
     
     try:
-        async for chunk in coordinator.run_stream(user_input):
-            output_text += chunk
-            chunk_count += 1
+        events = await workflow.run(user_input)
+        outputs = events.get_outputs()
         
         # Record metrics
         duration = time.time() - start_time
+        model_id = (
+            config.models.ollama.model_id
+            if config.models.provider == "ollama"
+            else config.models.azure_openai.deployment_name or "azure"
+        )
         metrics_collector.record(
             operation="query",
-            agent="coordinator",
+            agent="workflow",
             duration_seconds=duration,
             success=True,
             input_length=len(user_input),
-            output_length=len(output_text),
-            chunk_count=chunk_count,
-            model=config.models.ollama.model_id,
+            output_length=sum(
+                len(o.summary or "") for o in outputs if isinstance(o, WorkflowOutput)
+            ),
+            model=model_id,
         )
         
         st.session_state.total_queries += 1
-        return output_text
+        return [o for o in outputs if isinstance(o, WorkflowOutput)]
         
     except Exception as e:
         duration = time.time() - start_time
+        model_id = (
+            config.models.ollama.model_id
+            if config.models.provider == "ollama"
+            else config.models.azure_openai.deployment_name or "azure"
+        )
         metrics_collector.record(
             operation="query",
-            agent="coordinator",
+            agent="workflow",
             duration_seconds=duration,
             success=False,
             error_message=str(e),
             input_length=len(user_input),
-            model=config.models.ollama.model_id,
+            model=model_id,
         )
         raise
+
+
+def format_workflow_output(outputs: list[WorkflowOutput]) -> str:
+    """Format WorkflowOutput list into a user-friendly markdown string."""
+    if not outputs:
+        return "_No response generated._"
+
+    parts: list[str] = []
+
+    # Merge question and ingestion results across outputs (covers "both" intent)
+    question: QuestionResult | None = None
+    ingestion: IngestionPreviewResult | None = None
+    all_sources: list[dict] = []
+
+    for out in outputs:
+        if out.question_result and not question:
+            question = out.question_result
+        if out.ingestion_result and not ingestion:
+            ingestion = out.ingestion_result
+        all_sources.extend(out.sources or [])
+
+    # Question answer section
+    if question:
+        parts.append(question.answer)
+        if question.suggest_web_search and question.search_query:
+            parts.append(
+                f"\n> 🔍 **Suggested web search:** `{question.search_query}`"
+            )
+        if question.confidence < 0.5:
+            parts.append(
+                "\n⚠️ _Low confidence — the knowledge base may not cover this topic yet._"
+            )
+
+    # Ingestion preview section
+    if ingestion:
+        parts.append("\n---")
+        parts.append("### 📥 Ingestion Preview")
+        parts.append(f"**{ingestion.title}**")
+
+        # Two-part badge helper (shields.io style: gray key | colored value)
+        def make_badge(key: str, value: str, value_bg: str, value_fg: str = "#fff") -> str:
+            key_style = (
+                "display:inline-block;padding:4px 8px;border-radius:3px 0 0 3px;"
+                "font-size:0.8em;font-weight:600;background:#555;color:#fff;"
+            )
+            value_style = (
+                f"display:inline-block;padding:4px 8px;border-radius:0 3px 3px 0;"
+                f"font-size:0.8em;font-weight:600;background:{value_bg};color:{value_fg};"
+            )
+            badge_wrap = "display:inline-block;margin-right:6px;margin-bottom:4px;"
+            return (
+                f'<span style="{badge_wrap}">'
+                f'<span style="{key_style}">{key}</span>'
+                f'<span style="{value_style}">{value}</span>'
+                f'</span>'
+            )
+
+        # Action badge
+        action_colors = {
+            "create_note": "#28a745",
+            "update_note": "#ffc107",
+            "add_url":     "#007bff",
+            "update_context": "#6c757d",
+            "skip":        "#dc3545",
+        }
+        action_bg = action_colors.get(ingestion.action, "#6c757d")
+        badges = make_badge("action", ingestion.action, action_bg)
+
+        # Domain badge
+        if ingestion.domain:
+            badges += make_badge("domain", ingestion.domain, "#9333ea")
+
+        # Confidence badge with color gradient
+        conf_pct = f"{ingestion.confidence:.0%}"
+        if ingestion.confidence >= 0.8:
+            conf_bg = "#28a745"
+        elif ingestion.confidence >= 0.5:
+            conf_bg = "#ffc107"
+        else:
+            conf_bg = "#dc3545"
+        badges += make_badge("confidence", conf_pct, conf_bg)
+
+        # Tag badges
+        if ingestion.tags:
+            for tag in ingestion.tags:
+                badges += make_badge("tag", tag, "#17a2b8")
+
+        parts.append(badges)
+
+        if ingestion.requires_review:
+            parts.append("\n⚠️ _Requires human review before applying._")
+        if ingestion.preview_content:
+            parts.append(f"\n```\n{ingestion.preview_content[:500]}\n```")
+
+    # Sources section
+    if all_sources:
+        seen = set()
+        unique: list[dict] = []
+        for s in all_sources:
+            key = s.get("title", "") + s.get("filename", "")
+            if key not in seen:
+                seen.add(key)
+                unique.append(s)
+        if unique:
+            parts.append("\n---")
+            parts.append(
+                "<details><summary>📚 Sources (%d)</summary>\n" % len(unique)
+            )
+            for s in unique[:10]:
+                title = s.get("title", s.get("filename", "Unknown"))
+                conf = s.get("confidence", 0)
+                parts.append(f"- **{title}** ({conf:.0%})")
+            parts.append("\n</details>")
+
+    return "\n".join(parts) if parts else "_Workflow completed with no displayable output._"
 
 
 # =============================================================================
@@ -255,29 +379,33 @@ def render_sidebar():
         # Connection Status
         st.subheader("🔌 Connection")
         if st.session_state.initialized:
-            st.success(f"Connected to Ollama")
-            st.caption(f"Host: `{config.models.ollama.host}`")
-            st.caption(f"Model: `{config.models.ollama.model_id}`")
+            provider = config.models.provider
+            st.success(f"Connected ({provider})")
+            if provider == "ollama":
+                st.caption(f"Host: `{config.models.ollama.host}`")
+                st.caption(f"Model: `{config.models.ollama.model_id}`")
+            else:
+                st.caption(f"Deployment: `{config.models.azure_openai.deployment_name}`")
             
             # Reload config button
-            if st.button("🔄 Reload Config", use_container_width=True, help="Reload config.yaml and reinitialize agents"):
+            if st.button("🔄 Reload Config", use_container_width=True, help="Reload config.yaml and reinitialize workflow"):
                 try:
                     # Force reload from disk
                     new_config = reload_config()
-                    logger.info(f"Config reloaded, new model: {new_config.models.ollama.model_id}")
+                    logger.info(f"Config reloaded, provider: {new_config.models.provider}")
                     
                     # Update session state
                     st.session_state.config = new_config
                     st.session_state.initialized = False  # Force reinitialization
-                    st.session_state.coordinator = None
+                    st.session_state.workflow = None
                     st.session_state.messages = []
                     
                     # Reinitialize with new config
-                    st.session_state.coordinator = CoordinatorAgent()
+                    st.session_state.workflow = build_workflow()
                     st.session_state.initialized = True
                     
-                    logger.info(f"Coordinator reinitialized with model: {new_config.models.ollama.model_id}")
-                    st.toast(f"✅ Config reloaded! Model: {new_config.models.ollama.model_id}")
+                    logger.info("Workflow reinitialized")
+                    st.toast("✅ Config reloaded!")
                     st.rerun()
                 except Exception as e:
                     logger.error(f"Failed to reload config: {e}", exc_info=True)
@@ -292,7 +420,6 @@ def render_sidebar():
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔄 New Chat", use_container_width=True):
-                st.session_state.coordinator.new_thread()
                 st.session_state.messages = []
                 st.rerun()
         with col2:
@@ -406,12 +533,13 @@ def render_chat():
             
             with st.spinner("Thinking..."):
                 try:
-                    # Run async function using persistent event loop
+                    # Run async workflow using persistent event loop
                     loop = get_or_create_event_loop()
                     asyncio.set_event_loop(loop)
-                    response = loop.run_until_complete(process_message(prompt))
+                    outputs = loop.run_until_complete(process_message(prompt))
                     
-                    st.markdown(response)
+                    response = format_workflow_output(outputs)
+                    st.markdown(response, unsafe_allow_html=True)
                     
                     # Add to history
                     st.session_state.messages.append({
@@ -431,7 +559,7 @@ def render_chat():
                         """)
                     else:
                         st.error(f"Error: {e}")
-                        st.info("Make sure Ollama is running and the model is available.")
+                        st.info("Check that the LLM provider is running and accessible.")
                 
                 finally:
                     st.session_state.processing = False

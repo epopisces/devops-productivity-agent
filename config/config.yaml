@@ -7,6 +7,9 @@ logging:
   file: null     # Optional: path to log file (e.g., "logs/workflow.log")
 
 models:
+  # LLM provider: "ollama" (local/default) or "azure_openai" (cloud)
+  provider: "ollama"
+
   # Ollama settings for local inference
   ollama:
     host: "http://localhost:11434"
@@ -15,28 +18,29 @@ models:
     #   - llama3.1:8b (good tool calling, needs ~6GB RAM)
     #   - llama3.2:3b (lightweight, good balance, needs ~2GB RAM)
     #   - qwen3:4b (excellent tool calling, needs ~4GB RAM)
-    model_id: "qwen3:4b"
+    model_id: "llama3.1:8b"
+
+  # Azure OpenAI settings (used when provider is "azure_openai")
+  # Authenticate via DefaultAzureCredential (az login, managed identity, etc.)
+  azure_openai:
+    endpoint: null      # or set AZURE_OPENAI_ENDPOINT env var
+    deployment_name: null  # or set AZURE_OPENAI_DEPLOYMENT env var
 
 agents:
-  coordinator:
-    name: "Coordinator"
-    description: "Central agent that orchestrates tool agents and communicates with users"
-    instructions_file: "config/instructions/coordinator.md"
-  
-  url_scraper:
-    name: "URLScraper"
-    description: "Fetches and parses web content from provided URLs"
-    instructions_file: "config/instructions/url_scraper.md"
-  
-  knowledge_ingestion:
-    name: "KnowledgeIngestion"
-    description: "Processes and stores content into organizational knowledge stores"
-    instructions_file: "config/instructions/knowledge_ingestion.md"
-  
-  org_context:
-    name: "OrgContext"
-    description: "Retrieves organizational context from knowledge stores (instructions, notes, URLs)"
-    instructions_file: "config/instructions/org_context.md"
+  triage:
+    name: "Triage"
+    description: "Classifies user intent and extracts domain/tags"
+    instructions_file: "config/instructions/triage.md"
+
+  question_handler:
+    name: "QuestionHandler"
+    description: "Answers questions using knowledge context and retrieval tools"
+    instructions_file: "config/instructions/question_handler.md"
+
+  ingestion_preview:
+    name: "IngestionPreview"
+    description: "Proposes knowledge-base writes for user approval"
+    instructions_file: "config/instructions/ingestion_preview.md"
 
 scraper:
   # Request timeout in seconds (10s is sufficient for most sites)
@@ -74,6 +78,13 @@ knowledge:
         category: "general"
         priority: "medium"
         reviewed: false
+
+# Workflow routing configuration
+workflow:
+  # Minimum answer confidence to display without suggesting web search
+  answer_confidence_threshold: 0.7
+  # Maximum source references to show the user
+  max_sources_displayed: 10
 
 # Metrics collection configuration
 metrics:

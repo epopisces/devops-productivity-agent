@@ -19,9 +19,26 @@ class OllamaConfig(BaseModel):
     model_id: str = Field(default="qwen3:1.7b")
 
 
+class AzureOpenAIConfig(BaseModel):
+    """Azure OpenAI model configuration."""
+    endpoint: str | None = Field(
+        default=None,
+        description="Azure OpenAI endpoint URL (or set AZURE_OPENAI_ENDPOINT env var)",
+    )
+    deployment_name: str | None = Field(
+        default=None,
+        description="Model deployment name (or set AZURE_OPENAI_DEPLOYMENT env var)",
+    )
+
+
 class ModelsConfig(BaseModel):
     """Models configuration."""
+    provider: str = Field(
+        default="ollama",
+        description="LLM provider: 'ollama' (local) or 'azure_openai' (cloud)",
+    )
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    azure_openai: AzureOpenAIConfig = Field(default_factory=AzureOpenAIConfig)
 
 
 class AgentConfig(BaseModel):
@@ -36,32 +53,25 @@ class AgentConfig(BaseModel):
 
 class AgentsConfig(BaseModel):
     """Agents configuration."""
-    coordinator: AgentConfig = Field(
+    triage: AgentConfig = Field(
         default_factory=lambda: AgentConfig(
-            name="Coordinator",
-            description="Central agent that orchestrates tool agents",
-            instructions_file="config/instructions/coordinator.md"
+            name="Triage",
+            description="Classifies user intent and extracts domain/tags",
+            instructions_file="config/instructions/triage.md",
         )
     )
-    url_scraper: AgentConfig = Field(
+    question_handler: AgentConfig = Field(
         default_factory=lambda: AgentConfig(
-            name="URLScraper",
-            description="Fetches and parses web content from URLs",
-            instructions_file="config/instructions/url_scraper.md"
+            name="QuestionHandler",
+            description="Answers questions using knowledge context and retrieval tools",
+            instructions_file="config/instructions/question_handler.md",
         )
     )
-    knowledge_ingestion: AgentConfig = Field(
+    ingestion_preview: AgentConfig = Field(
         default_factory=lambda: AgentConfig(
-            name="KnowledgeIngestion",
-            description="Processes and stores content into organizational knowledge stores",
-            instructions_file="config/instructions/knowledge_ingestion.md"
-        )
-    )
-    org_context: AgentConfig = Field(
-        default_factory=lambda: AgentConfig(
-            name="OrgContext",
-            description="Retrieves organizational context from knowledge stores",
-            instructions_file="config/instructions/org_context.md"
+            name="IngestionPreview",
+            description="Proposes knowledge-base writes for user approval",
+            instructions_file="config/instructions/ingestion_preview.md",
         )
     )
 
@@ -147,12 +157,27 @@ class LoggingConfig(BaseModel):
     file: str | None = Field(default=None)
 
 
+class WorkflowConfig(BaseModel):
+    """Workflow routing configuration."""
+    answer_confidence_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence to display an answer without suggesting web search",
+    )
+    max_sources_displayed: int = Field(
+        default=10,
+        description="Maximum number of source references to show the user",
+    )
+
+
 class AppConfig(BaseModel):
     """Application configuration."""
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     scraper: ScraperConfig = Field(default_factory=ScraperConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     progress: ProgressConfig = Field(default_factory=ProgressConfig)
@@ -201,9 +226,26 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     if os.getenv("OLLAMA_MODEL_ID"):
         config_data["models"]["ollama"]["model_id"] = os.getenv("OLLAMA_MODEL_ID")
         logger.debug(f"Using OLLAMA_MODEL_ID from environment: {os.getenv('OLLAMA_MODEL_ID')}")
-    
+
+    # Provider selection
+    if os.getenv("LLM_PROVIDER"):
+        config_data["models"]["provider"] = os.getenv("LLM_PROVIDER")
+        logger.debug(f"Using LLM_PROVIDER from environment: {os.getenv('LLM_PROVIDER')}")
+
+    # Azure OpenAI overrides
+    if "azure_openai" not in config_data["models"]:
+        config_data["models"]["azure_openai"] = {}
+    if os.getenv("AZURE_OPENAI_ENDPOINT"):
+        config_data["models"]["azure_openai"]["endpoint"] = os.getenv("AZURE_OPENAI_ENDPOINT")
+    if os.getenv("AZURE_OPENAI_DEPLOYMENT"):
+        config_data["models"]["azure_openai"]["deployment_name"] = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+
     config = AppConfig(**config_data)
-    logger.info(f"Configuration loaded: model={config.models.ollama.model_id}, host={config.models.ollama.host}")
+    provider = config.models.provider
+    if provider == "ollama":
+        logger.info(f"Configuration loaded: provider=ollama, model={config.models.ollama.model_id}, host={config.models.ollama.host}")
+    else:
+        logger.info(f"Configuration loaded: provider={provider}, deployment={config.models.azure_openai.deployment_name}")
     return config
 
 

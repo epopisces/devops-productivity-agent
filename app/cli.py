@@ -1,21 +1,18 @@
 """Command Line Interface for Multi-Agent Workflow.
 
-Simple CLI chat interface for interacting with the Coordinator agent.
+Simple CLI chat interface using the WorkflowBuilder-based graph.
 """
 
 import asyncio
 import logging
 import sys
+import time
 
-from app.agents.coordinator import CoordinatorAgent
 from app.config import get_config
 from app.logging_config import setup_logging, LOGGER_ROOT
 from app.metrics import configure_metrics, get_metrics_collector
-from app.progress_tracker import (
-    StreamingProgressTracker,
-    ProgressConfig,
-    ProgressStyle,
-)
+from app.models import WorkflowOutput, QuestionResult, IngestionPreviewResult
+from app.workflows import build_workflow
 
 # CLI logger
 logger = logging.getLogger("workflow.cli")
@@ -42,8 +39,13 @@ def print_config():
     config = get_config()
     root_logger = logging.getLogger(LOGGER_ROOT)
     print("\n--- Configuration ---")
-    print(f"Ollama Host: {config.models.ollama.host}")
-    print(f"Model: {config.models.ollama.model_id}")
+    print(f"Provider: {config.models.provider}")
+    if config.models.provider == "ollama":
+        print(f"Ollama Host: {config.models.ollama.host}")
+        print(f"Model: {config.models.ollama.model_id}")
+    else:
+        print(f"Azure OpenAI Endpoint: {config.models.azure_openai.endpoint}")
+        print(f"Deployment: {config.models.azure_openai.deployment_name}")
     print(f"Scraper Timeout: {config.scraper.timeout}s")
     print(f"Log Level: {logging.getLevelName(root_logger.level)}")
     print(f"Metrics: {'enabled' if config.metrics.enabled else 'disabled'}")
@@ -78,11 +80,11 @@ def print_metrics():
     print("-" * 22 + "\n")
 
 
-async def chat_loop(coordinator: CoordinatorAgent):
+async def chat_loop(workflow):
     """Main chat loop.
-    
+
     Args:
-        coordinator: The coordinator agent instance.
+        workflow: The built Workflow instance.
     """
     print_welcome()
     
@@ -103,7 +105,6 @@ async def chat_loop(coordinator: CoordinatorAgent):
                     print("\nGoodbye!")
                     break
                 elif command == "/new":
-                    coordinator.new_thread()
                     print("\n--- New conversation started ---\n")
                     continue
                 elif command == "/config":
@@ -124,73 +125,57 @@ async def chat_loop(coordinator: CoordinatorAgent):
                     print("Type /help for available commands.\n")
                     continue
             
-            # Process user message with streaming output and progress tracking
+            # Process user message through workflow
             config = get_config()
             metrics_collector = get_metrics_collector()
             
             print("\nAssistant: ", end="", flush=True)
             
-            # Create progress tracker for streaming
-            progress_tracker = StreamingProgressTracker(
-                idle_threshold=config.progress.streaming_idle_threshold,
-                update_interval=config.progress.update_interval,
-            ) if config.progress.enabled else None
-            
             try:
-                import time
                 start_time = time.time()
-                output_text = ""
-                chunk_count = 0
                 
-                # Start progress monitoring if enabled
-                if progress_tracker:
-                    await progress_tracker.start()
+                events = await workflow.run(user_input)
+                outputs = [o for o in events.get_outputs() if isinstance(o, WorkflowOutput)]
                 
-                async for chunk in coordinator.run_stream(user_input):
-                    print(chunk, end="", flush=True)
-                    output_text += chunk
-                    chunk_count += 1
-                    # Mark activity to reset idle timer
-                    if progress_tracker:
-                        progress_tracker.activity()
+                # Format and display
+                response = _format_cli_output(outputs)
+                print(response)
+                print()  # Blank line for spacing
                 
-                # Stop progress tracking
-                if progress_tracker:
-                    await progress_tracker.stop()
-                
-                print()  # Blank line for spacing after response
-                
-                # Record metrics (automatically appends to daily log)
+                # Record metrics
                 duration = time.time() - start_time
+                model_id = (
+                    config.models.ollama.model_id
+                    if config.models.provider == "ollama"
+                    else config.models.azure_openai.deployment_name or "azure"
+                )
                 metrics_collector.record(
                     operation="query",
-                    agent="coordinator",
+                    agent="workflow",
                     duration_seconds=duration,
                     success=True,
                     input_length=len(user_input),
-                    output_length=len(output_text),
-                    chunk_count=chunk_count,
-                    model=config.models.ollama.model_id,
+                    output_length=len(response),
+                    model=model_id,
                 )
                 
             except Exception as e:
-                # Stop progress tracking on error
-                if progress_tracker:
-                    await progress_tracker.stop()
-                
-                # Record failed metric (automatically appends to daily log)
                 duration = time.time() - start_time if 'start_time' in dir() else 0
+                model_id = (
+                    config.models.ollama.model_id
+                    if config.models.provider == "ollama"
+                    else config.models.azure_openai.deployment_name or "azure"
+                )
                 metrics_collector.record(
                     operation="query",
-                    agent="coordinator",
+                    agent="workflow",
                     duration_seconds=duration,
                     success=False,
                     error_message=str(e),
                     input_length=len(user_input),
-                    model=config.models.ollama.model_id,
+                    model=model_id,
                 )
                 
-                # Check for common Ollama JSON escaping errors with small models
                 error_msg = str(e)
                 if "invalid character" in error_msg and "escape code" in error_msg:
                     logger.error(f"Tool call JSON error: {e}", exc_info=True)
@@ -202,10 +187,11 @@ async def chat_loop(coordinator: CoordinatorAgent):
                     print("  3. Or try: llama3.2:3b, mistral:7b, or qwen3:4b")
                     print("\nYou can also try rephrasing your request more simply.\n")
                 else:
-                    logger.error(f"Error during agent execution: {e}", exc_info=True)
+                    logger.error(f"Error during workflow execution: {e}", exc_info=True)
                     print(f"\n\nError: {e}")
-                    print("Make sure Ollama is running and the model is available.")
-                    print(f"Try: ollama pull {get_config().models.ollama.model_id}\n")
+                    print("Check that the LLM provider is running and accessible.")
+                    if config.models.provider == "ollama":
+                        print(f"Try: ollama pull {config.models.ollama.model_id}\n")
                 
         except KeyboardInterrupt:
             print("\n\nInterrupted. Type /quit to exit.\n")
@@ -213,6 +199,39 @@ async def chat_loop(coordinator: CoordinatorAgent):
             logger.info("EOF received, exiting")
             print("\nGoodbye!")
             break
+
+
+def _format_cli_output(outputs: list[WorkflowOutput]) -> str:
+    """Format WorkflowOutput list for terminal display."""
+    if not outputs:
+        return "(no response generated)"
+
+    parts: list[str] = []
+    question: QuestionResult | None = None
+    ingestion: IngestionPreviewResult | None = None
+
+    for out in outputs:
+        if out.question_result and not question:
+            question = out.question_result
+        if out.ingestion_result and not ingestion:
+            ingestion = out.ingestion_result
+
+    if question:
+        parts.append(question.answer)
+        if question.suggest_web_search and question.search_query:
+            parts.append(f"\n  [Web search suggested: {question.search_query}]")
+
+    if ingestion:
+        parts.append(f"\n--- Ingestion Preview ---")
+        parts.append(f"  Action: {ingestion.action}")
+        parts.append(f"  Title:  {ingestion.title}")
+        if ingestion.tags:
+            parts.append(f"  Tags:   {', '.join(ingestion.tags)}")
+        parts.append(f"  Confidence: {ingestion.confidence:.0%}")
+        if ingestion.requires_review:
+            parts.append("  ⚠ Requires human review")
+
+    return "\n".join(parts)
 
 
 async def async_main():
@@ -234,19 +253,27 @@ async def async_main():
     if config.metrics.enabled:
         logger.info(f"Metrics collection enabled: {config.metrics.directory}")
     
-    print(f"\nConnecting to Ollama at {config.models.ollama.host}...")
-    print(f"Using model: {config.models.ollama.model_id}")
-    print(f"Logging level: {config.logging.level} (use /debug to toggle)")
+    provider = config.models.provider
+    if provider == "ollama":
+        print(f"\nConnecting to Ollama at {config.models.ollama.host}...")
+        print(f"Using model: {config.models.ollama.model_id}")
+    else:
+        print(f"\nUsing Azure OpenAI deployment: {config.models.azure_openai.deployment_name}")
+    print(f"Logging level: {config.logging.level}")
     
     try:
-        coordinator = CoordinatorAgent()
-        await chat_loop(coordinator)
+        workflow = build_workflow()
+        await chat_loop(workflow)
     except Exception as e:
-        logger.error(f"Failed to initialize agent: {e}", exc_info=True)
-        print(f"\nError initializing agent: {e}")
+        logger.error(f"Failed to initialize workflow: {e}", exc_info=True)
+        print(f"\nError initializing workflow: {e}")
         print("\nTroubleshooting:")
-        print("1. Make sure Ollama is running: ollama serve")
-        print(f"2. Pull the model: ollama pull {config.models.ollama.model_id}")
+        if provider == "ollama":
+            print("1. Make sure Ollama is running: ollama serve")
+            print(f"2. Pull the model: ollama pull {config.models.ollama.model_id}")
+        else:
+            print("1. Check Azure OpenAI endpoint and deployment")
+            print("2. Ensure authentication is configured (az login)")
         print("3. Check your .env or config/config.yaml settings")
         sys.exit(1)
     

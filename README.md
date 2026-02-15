@@ -1,16 +1,20 @@
 # Multi-Agent Workflow Assistant - MVP
 ---
 
-Use this template as a springboard for building a multi-agent workflow application using the Microsoft Agent Framework.  Out of the box this is a locally-hosted Python application that uses the Microsoft Agent Framework to provide augmented chatbot capabilities through a coordinator agent that orchestrates specialized tool agents.
+This is a knowledge worker, a multi-agent workflow application using the Microsoft Agent Framework that retrieves, synthesizes, and stores information. Out of the box this is a locally-hosted Python application that uses the **Microsoft Agent Framework** with a **WorkflowBuilder graph** to provide intelligent query triaging, knowledge retrieval, and structured responses.
 
 It is currently in a Minimum Viable Product (MVP) state, and additional features will be added presently.
 
 ## Features (MVP)
 
-- **Coordinator Agent**: Central agent that communicates with users and routes tasks
-- **URL Scraper Agent Tool**: Fetches and analyzes web content from URLs
-- **CLI Interface**: Simple command-line chat interface
-- **Ollama Integration**: Local LLM inference optimized for consumer hardware
+- **WorkflowBuilder Graph**: Structured workflow with conditional routing based on user intent
+- **Intelligent Triage**: Automatically classifies queries as questions, knowledge ingestion, or both
+- **Knowledge Retrieval**: Tag-based search across organizational context, notes, and indexed URLs
+- **Question Answering**: Synthesizes answers from retrieved context with confidence scoring
+- **Ingestion Previews**: Generates previews of proposed knowledge base writes (URLs, notes, context updates)
+- **URL Scraping**: Fetches and parses web content with JS-only page detection
+- **Dual Interface**: CLI and Streamlit web UI
+- **Provider-Agnostic LLM**: Supports Ollama (default, local) and Azure OpenAI
 
 ## Requirements
 
@@ -104,26 +108,152 @@ The web interface includes:
 
 ## Usage
 
+### Workflow Behavior
+
+The application processes your input through a multi-stage workflow:
+
+1. **Triage**: Classifies your intent (question, ingestion, or both) and extracts metadata (domain, tags)
+2. **Knowledge Lookup**: Searches existing knowledge base using extracted tags
+3. **Conditional Routing**:
+   - **Question** → Synthesizes answer from retrieved context
+   - **Ingestion** → Generates preview of proposed knowledge write (URL index, note, context update)
+   - **Both** → Does both operations
+4. **Response Formatting**: Structures output with sources, confidence scores, and badges
+
 ### CLI Commands
 
 Once running, you can:
 
 1. **Ask questions**: Type any question and press Enter
 2. **Analyze URLs**: Paste a URL to fetch and analyze its content
-3. **Commands**:
+3. **Store knowledge**: Share information to save to the knowledge base
+4. **Commands**:
    - `/new` - Start a new conversation
    - `/config` - Show current configuration
    - `/loglevel [level]` - Set logging level (DEBUG, INFO, WARNING, ERROR)
    - `/help` - Show help message
    - `/quit` - Exit the application
 
-### Example
+### Examples
 
+**Question**:
 ```
-You: Is there anything useful at https://kubernetes.io/docs/concepts/overview/ for my DevOps team?
+You: Do we have any notes on Kubernetes deployment?
 ```
 
-# Customizing the Template
+**URL Analysis**:
+```
+You: Analyze https://kubernetes.io/docs/concepts/overview/
+```
+
+**Knowledge Ingestion**:
+```
+You: Save this: Our team uses Python 3.11+ and deploys via GitHub Actions to Azure
+```
+
+**Both (URL + Store)**:
+```
+You: I'd like to save the AI Dev Project Setup Prompts URL in my index: https://notion.so/setup-prompts
+```
+
+## Customization
+
+### Instruction Files
+
+Each LLM-backed executor uses an instruction file that defines its behavior. These are **user-editable** and located in `config/instructions/`:
+
+| File | Executor | Purpose | Customizable Elements |
+|------|----------|---------|----------------------|
+| `triage.md` | TriageExecutor | Classifies user intent & extracts metadata | Intent rules, domain list, tag extraction logic |
+| `question_handler.md` | QuestionHandlerExecutor | Synthesizes answers from context | Answer format, citation style, confidence thresholds |
+| `ingestion_preview.md` | IngestionPreviewExecutor | Previews knowledge writes | Quality thresholds, action rules, review criteria |
+
+### Configuration (`config/config.yaml`)
+
+Key settings you can customize:
+
+```yaml
+models:
+  provider: "ollama"  # or "azure_openai"
+  ollama:
+    host: "http://localhost:11434"
+    model_id: "llama3.2:3b"  # Change to your preferred model
+  azure_openai:  # Optional: configure for Azure OpenAI
+    endpoint: "https://your-endpoint.openai.azure.com"
+    deployment_name: "gpt-4"
+
+knowledge:
+  context_file: "knowledge/context.md"  # Org-level context
+  url_index_file: "knowledge/sources/url_index.yaml"  # Indexed URLs
+  notes_topics:
+    general:
+      directory: "knowledge/notes"  # Notes directory
+      description: "General knowledge and documentation"
+
+scraper:
+  timeout: 30  # URL fetch timeout (seconds)
+  max_content_length: 10000  # Truncate long pages
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: null  # Optional: log to file
+
+metrics:
+  enabled: true
+  directory: "metrics"
+```
+
+### Tool Functions (`app/tools/`)
+
+Standalone sync functions used by executors:
+
+- **`url_scraper.py`**: `fetch_url()` - Fetches and parses web content
+- **`knowledge_retrieval.py`**: `get_available_tags()`, `search_by_tags()` - Tag-based search
+- **`knowledge_ingestion.py`**: `add_url_to_index()`, `create_note()`, `update_instructions_file()` - Write operations
+- **`org_context.py`**: `get_instructions_context()`, `read_note()`, `search_knowledge()` - Read operations
+
+You can add new tools by:
+1. Creating a new `.py` file in `app/tools/`
+2. Defining sync functions with `Annotated` type hints
+3. Decorating with `@track_tool_call("tool_name")`
+4. Registering them on the appropriate executor in `app/agents/` or `app/executors/`
+
+### Knowledge Store (`knowledge/`)
+
+All knowledge is stored in structured formats:
+
+- **`context.md`**: High-level organizational context (plain markdown)
+- **`sources/url_index.yaml`**: Indexed URLs with metadata (YAML list with title, summary, tags, domain)
+- **`notes/_index.yaml`**: Notes index (YAML list with filename, title, summary, tags, domain)
+- **`notes/*.md`**: Detailed notes with YAML frontmatter
+
+You can manually edit these files or let the ingestion workflow manage them.
+
+### Switching LLM Providers
+
+**Ollama (default)**:
+```yaml
+models:
+  provider: "ollama"
+  ollama:
+    host: "http://localhost:11434"
+    model_id: "llama3.2:3b"
+```
+
+**Azure OpenAI**:
+```yaml
+models:
+  provider: "azure_openai"
+  azure_openai:
+    endpoint: "https://your-endpoint.openai.azure.com"
+    deployment_name: "gpt-4"
+    api_version: "2024-02-01"
+```
+
+Set the `AZURE_OPENAI_API_KEY` environment variable in `.env`:
+```env
+AZURE_OPENAI_API_KEY=your-key-here
+```
 
 ---
 
@@ -147,16 +277,45 @@ You: Is there anything useful at https://kubernetes.io/docs/concepts/overview/ f
 # Changelog
 ---
 
+### 2026-02-15 (Claude Opus 4.6 w/AIAgentExpert)
+- **Updated**: `docs/architecture.md` — replaced outdated coordinator-agent diagram with current WorkflowBuilder graph showing Triage → KnowledgeLookup → [conditional routing] → QuestionHandler/IngestionPreview → ResponseFormatter flow, executor types, tool usage patterns, and data flow with Pydantic models
+- **Updated**: README — updated Features, Usage, and added comprehensive Customization section covering:
+  - Instruction files (triage, question_handler, ingestion_preview) with purpose and customizable elements
+  - Configuration options in `config.yaml` (LLM provider, knowledge paths, scraper settings, logging, metrics)
+  - Tool functions in `app/tools/` and how to add new ones
+  - Knowledge store structure (`context.md`, URL index, notes with frontmatter)
+  - LLM provider switching (Ollama vs Azure OpenAI)
+  - Workflow behavior explanation (Triage → Lookup → Conditional Routing → Formatting)
+  - Usage examples for questions, URL analysis, knowledge ingestion, and both flows
+
+### 2026-02-14 (Claude Opus 4.6 w/AIAgentExpert)
+- **Fixed**: Streamlit debug launch config — changed `cwd` from `${workspaceFolder}/app` to `${workspaceFolder}` and script path from `web.py` to `app/web.py`; resolves `ModuleNotFoundError: No module named 'app.models'` when debugging
+- **Fixed**: Updated `WorkflowBuilder` usage in `app/workflows/main_workflow.py` to match current `agent-framework` API — replaced removed constructor kwargs (`start_executor`, `output_executors`) with `register_executor()` factories + `set_start_executor()` + string-based `add_edge()` references
+- **Changed**: Ingestion preview section in `web.py` — two-part shields.io-style badges (gray key | colored value) for action, domain, tags, and confidence; colors vary by action type and confidence level
+- **Fixed**: URL scraper now detects JS-only / SPA pages (e.g. Notion) that return no usable content and returns a descriptive error instead of garbage text
+- **Added**: `tests/test_web.py` — 12 tests covering web module imports, `format_workflow_output` (empty, question, low-confidence, web search, ingestion badges, source deduplication), and `web_runner` entry point
+- **Added**: `test_fetch_url_js_only_page` test in `test_url_scraper.py`
+
 ### 2026-02-13 (Claude Opus 4.6 w/AIAgentExpert)
+- **Architecture**: Migrated from coordinator-agent-as-tool pattern to WorkflowBuilder graph
+  - New flow: Triage → KnowledgeLookup → QuestionHandler / IngestionPreview → ResponseFormatter
+  - Conditional edge routing based on classified intent (question, ingestion, or both)
+  - Triage, QuestionHandler, IngestionPreview are custom `Executor` subclasses wrapping `ChatAgent`
+  - KnowledgeLookup and ResponseFormatter are deterministic (no LLM) executors
+- **Added**: `app/models.py` — shared Pydantic models (`TriageResult`, `LookupResult`, `QuestionResult`, `IngestionPreviewResult`, `WorkflowOutput`)
+- **Added**: `app/tools/` — flat directory of standalone sync tool functions (extracted from old agent wrappers)
+  - `url_scraper.py`, `knowledge_retrieval.py`, `knowledge_ingestion.py`, `org_context.py`
+- **Added**: `app/executors/` — `KnowledgeLookupExecutor`, `ResponseFormatterExecutor`
+- **Added**: `app/agents/triage.py`, `question_handler.py`, `ingestion_preview.py` — LLM-backed Executors
+- **Added**: `app/workflows/main_workflow.py` — `build_workflow()` factory wiring the full graph
+- **Added**: `app/chat_client.py` — provider-agnostic factory supporting Ollama (default) and Azure OpenAI
+- **Added**: Instruction files for new agents (`config/instructions/triage.md`, `question_handler.md`, `ingestion_preview.md`)
+- **Changed**: `config.yaml` / `config.py` — replaced coordinator/url_scraper/knowledge_ingestion/org_context agent configs with triage/question_handler/ingestion_preview; added `models.provider`, `models.azure_openai`, and `workflow` config sections
+- **Changed**: `web.py` — uses `build_workflow()` + `format_workflow_output()` instead of `CoordinatorAgent`; renders structured WorkflowOutput with source cards and ingestion previews
+- **Changed**: `cli.py` — uses `build_workflow()` instead of `CoordinatorAgent`; formats structured output for terminal
+- **Removed**: `app/agents/coordinator.py`, `app/agents/tools/` directory (replaced by `app/tools/`)
+- **Updated**: Tests — removed coordinator/url_scraper_agent tests; added `test_workflow.py` for routing conditions; updated import paths and mock configs
 - **Optimized**: Condensed all agent instruction prompts for faster inference with smaller models
-  - Coordinator: ~75% token reduction — removed redundant emphasis, consolidated routing into a table
-  - Org Context: ~65% reduction — merged duplicate strategy/behavior sections
-  - Knowledge Ingestion: ~55% reduction — replaced verbose guidelines with routing table
-  - URL Scraper: ~70% reduction — stripped to essentials
-- **Fixed**: qwen3:4b outputting tool calls as text instead of invoking them
-  - Simplified `as_tool()` descriptions on all three tool agents (shorter = fewer tokens for small models to parse)
-  - Removed routing hints from coordinator prompt that small models took literally (e.g., passing just "createnote" instead of the full user request)
-  - Added raw JSON leak pattern to `_strip_tool_call_leaks()` for qwen3-style output
 
 ### 2026-02-12 (Claude Opus 4.6)
 - **Changed**: Reorganized knowledge folder structure for unified knowledge management

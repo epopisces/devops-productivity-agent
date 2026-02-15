@@ -17,10 +17,9 @@
             "request": "launch",
             "prelaunchTask": "uv_sync",
             "module": "streamlit",
-            "cwd": "${workspaceFolder}/app",
             "args": [
                 "run",
-                "web.py",
+                "app/web.py",
                 "--server.port=8501",
             ]
         },

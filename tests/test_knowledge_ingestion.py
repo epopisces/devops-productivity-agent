@@ -34,11 +34,11 @@ def mock_config(temp_knowledge_dir):
             ollama=OllamaConfig(host="http://localhost:11434", model_id="test-model")
         ),
         agents=AgentsConfig(
-            coordinator=AgentConfig(name="Coordinator", description="Test coordinator"),
-            url_scraper=AgentConfig(name="URLScraper", description="Test scraper"),
-            knowledge_ingestion=AgentConfig(
-                name="KnowledgeIngestion",
-                description="Test knowledge ingestion"
+            triage=AgentConfig(name="Triage", description="Test triage"),
+            question_handler=AgentConfig(name="QuestionHandler", description="Test QH"),
+            ingestion_preview=AgentConfig(
+                name="IngestionPreview",
+                description="Test ingestion preview"
             ),
         ),
         knowledge=KnowledgeConfig(
@@ -67,9 +67,9 @@ class TestAddUrlToIndex:
     
     def test_add_url_above_threshold(self, mock_config, temp_knowledge_dir):
         """Test adding URL with scores above threshold."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import add_url_to_index
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import add_url_to_index
                 
                 result = add_url_to_index(
                     url="https://example.com",
@@ -99,9 +99,9 @@ class TestAddUrlToIndex:
     
     def test_add_url_below_confidence_threshold(self, mock_config, temp_knowledge_dir):
         """Test that URLs below confidence threshold require review."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import add_url_to_index
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import add_url_to_index
                 
                 result = add_url_to_index(
                     url="https://example.com",
@@ -118,9 +118,9 @@ class TestAddUrlToIndex:
     
     def test_add_url_below_relevance_threshold(self, mock_config, temp_knowledge_dir):
         """Test that URLs below relevance threshold require review."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import add_url_to_index
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import add_url_to_index
                 
                 result = add_url_to_index(
                     url="https://example.com",
@@ -137,9 +137,9 @@ class TestAddUrlToIndex:
     
     def test_update_existing_url(self, mock_config, temp_knowledge_dir):
         """Test updating an existing URL entry."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import add_url_to_index
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import add_url_to_index
                 
                 # Add initial URL
                 add_url_to_index(
@@ -177,9 +177,9 @@ class TestUpdateInstructionsFile:
     
     def test_create_new_section(self, mock_config, temp_knowledge_dir):
         """Test creating a new section in instructions file."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import update_instructions_file
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import update_instructions_file
                 
                 result = update_instructions_file(
                     section="Team Structure",
@@ -207,9 +207,9 @@ class TestUpdateInstructionsFile:
         context_path.parent.mkdir(parents=True, exist_ok=True)
         context_path.write_text("# Instructions\n\nLast Updated: 2024-01-01\n\n## Team Structure\n\nExisting content.\n")
         
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import update_instructions_file
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import update_instructions_file
                 
                 result = update_instructions_file(
                     section="Team Structure",
@@ -232,9 +232,9 @@ class TestUpdateInstructionsFile:
         context_path.parent.mkdir(parents=True, exist_ok=True)
         context_path.write_text("# Instructions\n\nLast Updated: 2024-01-01\n\n## Team Structure\n\nOld content to replace.\n")
         
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import update_instructions_file
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import update_instructions_file
                 
                 result = update_instructions_file(
                     section="Team Structure",
@@ -256,9 +256,9 @@ class TestCreateNote:
     
     def test_create_note_with_frontmatter(self, mock_config, temp_knowledge_dir):
         """Test creating a note with proper frontmatter."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import create_note
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import create_note
                 
                 result = create_note(
                     title="Test Note",
@@ -290,9 +290,9 @@ class TestCreateNote:
     
     def test_create_note_updates_index(self, mock_config, temp_knowledge_dir):
         """Test that creating a note updates the index."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import create_note
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import create_note
                 
                 create_note(
                     title="Indexed Note",
@@ -313,9 +313,9 @@ class TestCreateNote:
     
     def test_create_note_below_threshold(self, mock_config, temp_knowledge_dir):
         """Test that notes below threshold require review."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import create_note
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import create_note
                 
                 result = create_note(
                     title="Low Confidence Note",
@@ -329,9 +329,9 @@ class TestCreateNote:
     
     def test_fallback_to_default_topic(self, mock_config, temp_knowledge_dir):
         """Test that unknown topics fall back to default."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import create_note
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import create_note
                 
                 result = create_note(
                     title="Unknown Topic Note",
@@ -350,9 +350,9 @@ class TestGetKnowledgeStatus:
     
     def test_status_with_empty_stores(self, mock_config, temp_knowledge_dir):
         """Test status when no knowledge has been stored."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import get_knowledge_status
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import get_knowledge_status
                 
                 result = get_knowledge_status()
                 
@@ -360,9 +360,9 @@ class TestGetKnowledgeStatus:
     
     def test_status_with_populated_stores(self, mock_config, temp_knowledge_dir):
         """Test status after adding content."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
-                from app.agents.tools.knowledge_ingestion import (
+        with patch("app.tools.knowledge_ingestion.get_config", return_value=mock_config):
+            with patch("app.tools.knowledge_ingestion._get_project_root", return_value=temp_knowledge_dir):
+                from app.tools.knowledge_ingestion import (
                     add_url_to_index,
                     create_note,
                     get_knowledge_status,
@@ -391,38 +391,3 @@ class TestGetKnowledgeStatus:
                 assert "1 URLs indexed" in result
                 assert "1 notes" in result
 
-
-class TestKnowledgeIngestionAgent:
-    """Tests for KnowledgeIngestionAgent class."""
-    
-    def test_agent_initialization(self, mock_config):
-        """Test agent initializes correctly."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion.OllamaChatClient") as mock_client:
-                mock_agent = MagicMock()
-                mock_client.return_value.as_agent.return_value = mock_agent
-                
-                from app.agents.tools.knowledge_ingestion import KnowledgeIngestionAgent
-                
-                agent = KnowledgeIngestionAgent()
-                
-                # Verify agent was created with correct parameters
-                mock_client.return_value.as_agent.assert_called_once()
-                call_kwargs = mock_client.return_value.as_agent.call_args[1]
-                
-                assert call_kwargs["name"] == "KnowledgeIngestion"
-                assert len(call_kwargs["tools"]) == 4  # 4 tools registered
-    
-    def test_as_tool(self, mock_config):
-        """Test agent can be converted to tool."""
-        with patch("app.agents.tools.knowledge_ingestion.get_config", return_value=mock_config):
-            with patch("app.agents.tools.knowledge_ingestion.OllamaChatClient") as mock_client:
-                mock_agent = MagicMock()
-                mock_client.return_value.as_agent.return_value = mock_agent
-                
-                from app.agents.tools.knowledge_ingestion import KnowledgeIngestionAgent
-                
-                agent = KnowledgeIngestionAgent()
-                tool = agent.as_tool()
-                
-                mock_agent.as_tool.assert_called_once()
