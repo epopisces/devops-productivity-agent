@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, HttpUrl
+from pydantic import BaseModel, Field, field_validator
 
 # Logger for this module
 logger = logging.getLogger("workflow.config")
@@ -198,9 +198,6 @@ class TracingConfig(BaseModel):
             
             return v
             
-        except ValueError:
-            # Re-raise our custom validation errors
-            raise
         except Exception as e:
             raise ValueError(
                 f"Invalid OTLP endpoint URL '{v}': {e}. "
