@@ -36,10 +36,12 @@ def configure_tracing(config: TracingConfig) -> None:
             f"OpenTelemetry tracing enabled → {config.otlp_endpoint} "
             f"(sensitive_data={'on' if config.enable_sensitive_data else 'off'})"
         )
-    except ImportError:
+    except ImportError as e:
+        missing_module = getattr(e, "name", str(e))
         logger.warning(
-            "Tracing enabled in config but opentelemetry packages not installed. "
-            "Install with: pip install opentelemetry-exporter-otlp-proto-grpc"
+            "Tracing enabled in config but a required observability module is "
+            f"missing ({missing_module!r}). Ensure 'agent_framework.observability' "
+            "and its OpenTelemetry dependencies are installed."
         )
     except Exception as e:
         logger.error(f"Failed to configure tracing: {e}", exc_info=True)
