@@ -29,7 +29,7 @@ def configure_tracing(config: TracingConfig) -> None:
         from agent_framework.observability import configure_otel_providers
 
         configure_otel_providers(
-            vs_code_extension_port=int(config.otlp_endpoint.rsplit(":", 1)[-1]),
+            vs_code_extension_port=config.get_port(),
             enable_sensitive_data=config.enable_sensitive_data,
         )
         logger.info(
