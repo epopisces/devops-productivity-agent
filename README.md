@@ -277,6 +277,9 @@ AZURE_OPENAI_API_KEY=your-key-here
 # Changelog
 ---
 
+### 2026-02-16 (Claude Opus 4.6)
+- **Refactored**: TracingConfig field naming for clarity — renamed `otlp_endpoint` (str) to `vs_code_extension_port` (int) to accurately reflect that Agent Framework's `configure_otel_providers()` only accepts a port number and always uses localhost, not a full OTLP endpoint URL. Updated `app/config.py`, `app/tracing.py`, `config/config.yaml`, and tests accordingly. Removed complex URL validation logic in favor of simple Pydantic integer constraints (ge=1, le=65535).
+
 ### 2026-02-15 (Claude Opus 4.6 w/AIAgentExpert)
 - **Added**: OpenTelemetry tracing support via Agent Framework's built-in `configure_otel_providers()`
   - New `app/tracing.py` module with `configure_tracing()` — auto-instruments chat clients, agents, and workflows (no manual spans needed)
