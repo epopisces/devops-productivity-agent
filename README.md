@@ -278,6 +278,13 @@ AZURE_OPENAI_API_KEY=your-key-here
 ---
 
 ### 2026-02-15 (Claude Opus 4.6 w/AIAgentExpert)
+- **Added**: OpenTelemetry tracing support via Agent Framework's built-in `configure_otel_providers()`
+  - New `app/tracing.py` module with `configure_tracing()` — auto-instruments chat clients, agents, and workflows (no manual spans needed)
+  - New `TracingConfig` Pydantic model in `app/config.py` with `enabled`, `otlp_endpoint`, and `enable_sensitive_data` fields
+  - Tracing config section added to `config/config.yaml` (disabled by default)
+  - Both CLI and Streamlit entrypoints call `configure_tracing()` on startup
+  - Added `opentelemetry-exporter-otlp-proto-grpc` dependency to `pyproject.toml`
+  - Integrates with AI Toolkit Agent Inspector trace viewer on `localhost:4317`
 - **Updated**: `docs/architecture.md` — replaced outdated coordinator-agent diagram with current WorkflowBuilder graph showing Triage → KnowledgeLookup → [conditional routing] → QuestionHandler/IngestionPreview → ResponseFormatter flow, executor types, tool usage patterns, and data flow with Pydantic models
 - **Updated**: README — updated Features, Usage, and added comprehensive Customization section covering:
   - Instruction files (triage, question_handler, ingestion_preview) with purpose and customizable elements

@@ -133,6 +133,19 @@ class KnowledgeConfig(BaseModel):
     )
 
 
+class TracingConfig(BaseModel):
+    """OpenTelemetry tracing configuration."""
+    enabled: bool = Field(default=False, description="Enable/disable OpenTelemetry tracing")
+    otlp_endpoint: str = Field(
+        default="http://localhost:4317",
+        description="OTLP gRPC endpoint (AI Toolkit default: localhost:4317)",
+    )
+    enable_sensitive_data: bool = Field(
+        default=False,
+        description="Capture prompts and completions in traces",
+    )
+
+
 class MetricsConfig(BaseModel):
     """Metrics collection configuration."""
     enabled: bool = Field(default=True, description="Enable/disable metrics collection")
@@ -180,6 +193,7 @@ class AppConfig(BaseModel):
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
     progress: ProgressConfig = Field(default_factory=ProgressConfig)
 
 
