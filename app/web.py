@@ -17,6 +17,7 @@ from app.config import get_config, load_config, reload_config, AppConfig
 from app.logging_config import setup_logging, LOGGER_ROOT
 from app.metrics import configure_metrics, get_metrics_collector
 from app.models import WorkflowOutput, QuestionResult, IngestionPreviewResult
+from app.tracing import configure_tracing
 from app.workflows import build_workflow
 
 # Page configuration - must be first Streamlit command
@@ -99,6 +100,9 @@ def initialize_app():
             enabled=config.metrics.enabled,
         )
         st.session_state.metrics_enabled = config.metrics.enabled
+        
+        # Configure tracing
+        configure_tracing(config.tracing)
         
         # Initialize workflow
         st.session_state.workflow = build_workflow()

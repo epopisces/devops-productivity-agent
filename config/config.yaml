@@ -93,6 +93,16 @@ metrics:
   # Directory to store metrics files
   directory: "metrics"
 
+# OpenTelemetry tracing configuration
+# Integrates with AI Toolkit Agent Inspector for trace viewing
+tracing:
+  # Enable/disable tracing (set to true, then open AI Toolkit trace viewer)
+  enabled: true
+  # OTLP gRPC endpoint (AI Toolkit default)
+  otlp_endpoint: "http://localhost:4317"
+  # Capture prompts and completions in traces (may contain sensitive data)
+  enable_sensitive_data: false
+
 # Progress indicator configuration
 progress:
   # Enable progress indicators during long operations

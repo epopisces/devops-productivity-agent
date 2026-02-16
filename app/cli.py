@@ -12,6 +12,7 @@ from app.config import get_config
 from app.logging_config import setup_logging, LOGGER_ROOT
 from app.metrics import configure_metrics, get_metrics_collector
 from app.models import WorkflowOutput, QuestionResult, IngestionPreviewResult
+from app.tracing import configure_tracing
 from app.workflows import build_workflow
 
 # CLI logger
@@ -252,6 +253,9 @@ async def async_main():
     )
     if config.metrics.enabled:
         logger.info(f"Metrics collection enabled: {config.metrics.directory}")
+    
+    # Configure tracing
+    configure_tracing(config.tracing)
     
     provider = config.models.provider
     if provider == "ollama":
