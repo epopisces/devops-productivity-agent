@@ -2,7 +2,7 @@
 
 Last Updated: 2025-12-22
 
-This file contains high-level organizational context summaries for agent reference.
+This file contains high-level domain-specific context summaries for agent reference.
 
 ## About This File
 

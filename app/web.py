@@ -13,11 +13,13 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-from app.config import get_config, load_config, reload_config, AppConfig
+from app.config import get_config, load_config, reload_config, AppConfig, validate_knowledge_domains, initialize_domain
 from app.logging_config import setup_logging, LOGGER_ROOT
 from app.metrics import configure_metrics, get_metrics_collector
 from app.models import WorkflowOutput, QuestionResult, IngestionPreviewResult
 from app.tracing import configure_tracing
+from app.tools.knowledge_ingestion import create_note, add_url_to_index, update_instructions_file
+from app.agents.ingestion_preview import refine_ingestion_preview
 from app.workflows import build_workflow
 
 # Page configuration - must be first Streamlit command
@@ -68,6 +70,9 @@ def init_session_state():
     if "event_loop" not in st.session_state:
         st.session_state.event_loop = None
 
+    if "pending_ingestions" not in st.session_state:
+        st.session_state.pending_ingestions = []
+
 
 def get_or_create_event_loop():
     """Get or create a persistent event loop for async operations."""
@@ -103,7 +108,15 @@ def initialize_app():
         
         # Configure tracing
         configure_tracing(config.tracing)
-        
+
+        # Validate knowledge domains (auto-init in web mode)
+        domain_results = validate_knowledge_domains(config, auto_initialize=True)
+        for result in domain_results:
+            if not result.ok:
+                logger.warning(
+                    f"Domain '{result.key}' still missing: {', '.join(result.missing)}"
+                )
+
         # Initialize workflow
         st.session_state.workflow = build_workflow()
         st.session_state.initialized = True
@@ -139,48 +152,66 @@ def load_knowledge_status() -> dict:
         "notes": {"exists": False, "count": 0, "files": []},
     }
     
-    # Context file
-    context_path = project_root / config.knowledge.context_file
-    if context_path.exists():
-        stat = context_path.stat()
-        status["instructions"] = {
-            "exists": True,
-            "size": stat.st_size,
-            "updated": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-        }
-    
-    # URL index
-    url_index_path = project_root / config.knowledge.url_index_file
-    if url_index_path.exists():
-        try:
-            with open(url_index_path, "r", encoding="utf-8") as f:
-                url_data = yaml.safe_load(f) or {}
-            urls = url_data.get("urls", [])
-            status["url_index"] = {
-                "exists": True,
-                "count": len(urls),
-                "urls": urls[:10],  # First 10 for display
-            }
-        except Exception:
-            pass
-    
-    # Notes
-    for topic, topic_config in config.knowledge.notes_topics.items():
-        notes_dir = project_root / topic_config.directory
+    # Aggregate across all domains
+    all_urls: list[dict] = []
+    all_notes: list[dict] = []
+    total_context_size = 0
+    latest_context_updated = None
+
+    for domain_key, domain_config in config.knowledge.domains.items():
+        # Context file
+        context_path = project_root / domain_config.context_file
+        if context_path.exists():
+            stat = context_path.stat()
+            total_context_size += stat.st_size
+            ts = datetime.fromtimestamp(stat.st_mtime)
+            if latest_context_updated is None or ts > latest_context_updated:
+                latest_context_updated = ts
+
+        # URL index
+        url_index_path = project_root / domain_config.url_index_file
+        if url_index_path.exists():
+            try:
+                with open(url_index_path, "r", encoding="utf-8") as f:
+                    url_data = yaml.safe_load(f) or {}
+                all_urls.extend(url_data.get("urls", []))
+            except Exception:
+                pass
+
+        # Notes
+        notes_dir = project_root / domain_config.notes_directory
         index_path = notes_dir / "_index.yaml"
         if index_path.exists():
             try:
                 with open(index_path, "r", encoding="utf-8") as f:
                     index_data = yaml.safe_load(f) or {}
-                notes = index_data.get("notes", [])
-                status["notes"] = {
-                    "exists": True,
-                    "count": len(notes),
-                    "files": notes[:10],  # First 10 for display
-                }
+                for note in index_data.get("notes", []):
+                    note["_domain_key"] = domain_key
+                    all_notes.append(note)
             except Exception:
                 pass
-    
+
+    if total_context_size > 0:
+        status["instructions"] = {
+            "exists": True,
+            "size": total_context_size,
+            "updated": latest_context_updated.strftime("%Y-%m-%d %H:%M") if latest_context_updated else None,
+        }
+
+    if all_urls:
+        status["url_index"] = {
+            "exists": True,
+            "count": len(all_urls),
+            "urls": all_urls[:10],
+        }
+
+    if all_notes:
+        status["notes"] = {
+            "exists": True,
+            "count": len(all_notes),
+            "files": all_notes[:10],
+        }
+
     return status
 
 
@@ -215,11 +246,7 @@ async def process_message(user_input: str) -> list[WorkflowOutput]:
         
         # Record metrics
         duration = time.time() - start_time
-        model_id = (
-            config.models.ollama.model_id
-            if config.models.provider == "ollama"
-            else config.models.azure_openai.deployment_name or "azure"
-        )
+        model_id = config.models.get_active_model_id()
         metrics_collector.record(
             operation="query",
             agent="workflow",
@@ -237,11 +264,7 @@ async def process_message(user_input: str) -> list[WorkflowOutput]:
         
     except Exception as e:
         duration = time.time() - start_time
-        model_id = (
-            config.models.ollama.model_id
-            if config.models.provider == "ollama"
-            else config.models.azure_openai.deployment_name or "azure"
-        )
+        model_id = config.models.get_active_model_id()
         metrics_collector.record(
             operation="query",
             agent="workflow",
@@ -345,6 +368,7 @@ def format_workflow_output(outputs: list[WorkflowOutput]) -> str:
             parts.append("\n⚠️ _Requires human review before applying._")
         if ingestion.preview_content:
             parts.append(f"\n```\n{ingestion.preview_content[:500]}\n```")
+        parts.append("\n👇 _Use the Approve / Dismiss buttons below to apply or discard this action._")
 
     # Sources section
     if all_sources:
@@ -369,6 +393,96 @@ def format_workflow_output(outputs: list[WorkflowOutput]) -> str:
     return "\n".join(parts) if parts else "_Workflow completed with no displayable output._"
 
 
+def execute_ingestion(ingestion: IngestionPreviewResult) -> str:
+    """Execute an approved ingestion action by calling the appropriate tool function."""
+    action = ingestion.action
+    logger.info(f"[WEB] Executing approved ingestion: action={action}, title='{ingestion.title}'")
+
+    try:
+        if action == "create_note":
+            result = create_note(
+                title=ingestion.title,
+                content=ingestion.preview_content,
+                domain=ingestion.domain,
+                tags=",".join(ingestion.tags),
+                summary=ingestion.title,
+                source_url=ingestion.triage.source_url if ingestion.triage else None,
+                confidence=ingestion.confidence,
+                relevance=ingestion.relevance,
+                approved=True,
+            )
+        elif action == "add_url":
+            source_url = (ingestion.triage.source_url if ingestion.triage else None) or ""
+            result = add_url_to_index(
+                url=source_url,
+                title=ingestion.title,
+                domain=ingestion.domain,
+                context=ingestion.preview_content[:200],
+                summary=ingestion.preview_content,
+                tags=",".join(ingestion.tags),
+                confidence=ingestion.confidence,
+                relevance=ingestion.relevance,
+                approved=True,
+            )
+        elif action == "update_context":
+            result = update_instructions_file(
+                section=ingestion.title,
+                content=ingestion.preview_content,
+                action="append",
+                confidence=ingestion.confidence,
+                relevance=ingestion.relevance,
+                approved=True,
+            )
+        elif action == "skip":
+            result = "Skipped — no action taken."
+        else:
+            result = f"Unknown action '{action}' — no action taken."
+
+        logger.info(f"[WEB] Ingestion result: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"[WEB] Ingestion failed: {e}", exc_info=True)
+        return f"Error: {e}"
+
+
+def render_pending_ingestions():
+    """Render pending ingestion previews with Approve / Dismiss buttons."""
+    if not st.session_state.pending_ingestions:
+        return
+
+    for idx, ingestion in enumerate(list(st.session_state.pending_ingestions)):
+        with st.container():
+            st.markdown("---")
+            st.markdown(f"### 📥 Pending: {ingestion.title}")
+
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.markdown(f"**Action:** `{ingestion.action}` &nbsp; **Domain:** `{ingestion.domain}`")
+                if ingestion.tags:
+                    st.markdown(f"**Tags:** {', '.join(ingestion.tags)}")
+                st.markdown(f"**Confidence:** {ingestion.confidence:.0%} &nbsp; **Relevance:** {ingestion.relevance:.0%}")
+            with col2:
+                if st.button("✅ Approve", key=f"approve_{idx}_{ingestion.title[:20]}", type="primary"):
+                    result = execute_ingestion(ingestion)
+                    st.session_state.pending_ingestions.remove(ingestion)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"✅ **Applied:** {result}",
+                    })
+                    st.rerun()
+            with col3:
+                if st.button("❌ Dismiss", key=f"dismiss_{idx}_{ingestion.title[:20]}"):
+                    st.session_state.pending_ingestions.remove(ingestion)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"❌ Dismissed ingestion: *{ingestion.title}*",
+                    })
+                    st.rerun()
+
+            with st.expander("Preview content", expanded=False):
+                st.markdown(ingestion.preview_content)
+
+
 # =============================================================================
 # UI Components
 # =============================================================================
@@ -387,7 +501,7 @@ def render_sidebar():
             st.success(f"Connected ({provider})")
             if provider == "ollama":
                 st.caption(f"Host: `{config.models.ollama.host}`")
-                st.caption(f"Model: `{config.models.ollama.model_id}`")
+                st.caption(f"Model: `{config.models.get_active_model_id()}`")
             else:
                 st.caption(f"Deployment: `{config.models.azure_openai.deployment_name}`")
             
@@ -513,6 +627,14 @@ def render_chat():
         - "Do I have any notes on Kubernetes?"
         """)
     
+    # Refinement-mode banner
+    if st.session_state.pending_ingestions:
+        st.info(
+            "📝 **Refinement mode** — Your next message will modify the pending "
+            "ingestion preview below. Approve or Dismiss to return to normal chat.",
+            icon="✏️",
+        )
+
     # Chat messages container
     chat_container = st.container()
     
@@ -520,7 +642,7 @@ def render_chat():
         # Display chat history
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                st.markdown(message["content"], unsafe_allow_html=True)
     
     # Chat input
     if prompt := st.chat_input("Type your message...", disabled=st.session_state.processing):
@@ -531,25 +653,57 @@ def render_chat():
         with st.chat_message("user"):
             st.markdown(prompt)
         
+        # Decide: refine existing preview or run full workflow
+        has_pending = bool(st.session_state.pending_ingestions)
+
         # Process and display assistant response
         with st.chat_message("assistant"):
             st.session_state.processing = True
             
-            with st.spinner("Thinking..."):
+            with st.spinner("Refining preview..." if has_pending else "Thinking..."):
                 try:
-                    # Run async workflow using persistent event loop
-                    loop = get_or_create_event_loop()
-                    asyncio.set_event_loop(loop)
-                    outputs = loop.run_until_complete(process_message(prompt))
-                    
-                    response = format_workflow_output(outputs)
-                    st.markdown(response, unsafe_allow_html=True)
-                    
-                    # Add to history
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": response,
-                    })
+                    if has_pending:
+                        # ── Refinement path ──
+                        # Treat user input as feedback on the most recent pending ingestion
+                        current_preview = st.session_state.pending_ingestions[-1]
+                        loop = get_or_create_event_loop()
+                        asyncio.set_event_loop(loop)
+                        refined = loop.run_until_complete(
+                            refine_ingestion_preview(current_preview, prompt)
+                        )
+                        # Replace the last pending ingestion with the refined one
+                        st.session_state.pending_ingestions[-1] = refined
+                        # Build a mini WorkflowOutput so format_workflow_output can render
+                        synthetic_output = WorkflowOutput(
+                            intent="ingestion",
+                            ingestion_result=refined,
+                            summary=f"Refined ingestion preview: {refined.title}",
+                        )
+                        response = format_workflow_output([synthetic_output])
+                        st.markdown(response, unsafe_allow_html=True)
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": response,
+                        })
+                    else:
+                        # ── Normal workflow path ──
+                        loop = get_or_create_event_loop()
+                        asyncio.set_event_loop(loop)
+                        outputs = loop.run_until_complete(process_message(prompt))
+                        
+                        # Extract any ingestion previews and store for approval
+                        for out in outputs:
+                            if out.ingestion_result and out.ingestion_result.action != "skip":
+                                st.session_state.pending_ingestions.append(out.ingestion_result)
+
+                        response = format_workflow_output(outputs)
+                        st.markdown(response, unsafe_allow_html=True)
+                        
+                        # Add to history
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": response,
+                        })
                     
                 except Exception as e:
                     error_msg = str(e)
@@ -568,6 +722,9 @@ def render_chat():
                 finally:
                     st.session_state.processing = False
 
+    # Render pending ingestion approvals below the chat
+    render_pending_ingestions()
+
 
 def render_knowledge_explorer():
     """Render the knowledge base explorer tab."""
@@ -581,12 +738,16 @@ def render_knowledge_explorer():
     
     with tab1:
         st.subheader("Organizational Context")
-        context_path = project_root / config.knowledge.context_file
-        if context_path.exists():
-            with open(context_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            st.markdown(content)
-        else:
+        found_context = False
+        for domain_key, domain_config in config.knowledge.domains.items():
+            context_path = project_root / domain_config.context_file
+            if context_path.exists():
+                found_context = True
+                st.markdown(f"#### {domain_key.title()}")
+                with open(context_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                st.markdown(content)
+        if not found_context:
             st.info("No context file found. Use the chat to add organizational context.")
     
     with tab2:
@@ -621,12 +782,12 @@ def render_knowledge_explorer():
                     
                     # Read full note button
                     if st.button(f"View Full Note", key=f"view_{note.get('filename')}"):
-                        for topic, topic_config in config.knowledge.notes_topics.items():
-                            note_path = project_root / topic_config.directory / note.get("filename")
-                            if note_path.exists():
-                                with open(note_path, "r", encoding="utf-8") as f:
-                                    st.markdown(f.read())
-                                break
+                        domain_key = note.get("_domain_key", "general")
+                        domain_cfg = config.knowledge.get_domain(domain_key)
+                        note_path = project_root / domain_cfg.notes_directory / note.get("filename")
+                        if note_path.exists():
+                            with open(note_path, "r", encoding="utf-8") as f:
+                                st.markdown(f.read())
         else:
             st.info("No notes found. Use the chat to create notes.")
 

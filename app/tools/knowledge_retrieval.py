@@ -86,7 +86,7 @@ def _get_project_root() -> Path:
 
 
 def _load_notes_index() -> list[dict]:
-    """Load all notes from all topic indexes.
+    """Load all notes from all domain indexes.
 
     Returns:
         List of note entry dicts from _index.yaml files.
@@ -95,34 +95,42 @@ def _load_notes_index() -> list[dict]:
     project_root = _get_project_root()
     all_notes: list[dict] = []
 
-    for _topic, topic_config in config.knowledge.notes_topics.items():
-        index_path = project_root / topic_config.directory / "_index.yaml"
+    for domain_name, domain_config in config.knowledge.domains.items():
+        index_path = project_root / domain_config.notes_directory / "_index.yaml"
         if not index_path.exists():
             continue
         with open(index_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+        for note in data.get("notes", []):
+            note.setdefault("domain", domain_name)
+            note["_domain_key"] = domain_name
         all_notes.extend(data.get("notes", []))
 
     return all_notes
 
 
 def _load_url_index() -> list[dict]:
-    """Load all URLs from the URL index.
+    """Load all URLs from all domain URL indexes.
 
     Returns:
         List of URL entry dicts.
     """
     config = get_config()
     project_root = _get_project_root()
-    index_path = project_root / config.knowledge.url_index_file
+    all_urls: list[dict] = []
 
-    if not index_path.exists():
-        return []
+    for domain_name, domain_config in config.knowledge.domains.items():
+        index_path = project_root / domain_config.url_index_file
+        if not index_path.exists():
+            continue
+        with open(index_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        for url_entry in data.get("urls", []):
+            url_entry.setdefault("domain", domain_name)
+            url_entry["_domain_key"] = domain_name
+        all_urls.extend(data.get("urls", []))
 
-    with open(index_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-
-    return data.get("urls", [])
+    return all_urls
 
 
 # ============================================================================
@@ -212,11 +220,11 @@ def search_by_tags_structured(tags: list[str]) -> list[KnowledgeMatch]:
     for note in notes:
         note_tags = {t.lower().strip() for t in note.get("tags", [])}
         if search_tags & note_tags:
-            topic_dir = None
-            for _topic, topic_config in config.knowledge.notes_topics.items():
-                topic_dir = topic_config.directory
-                break
-            filepath = f"{topic_dir}/{note.get('filename', '')}" if topic_dir else note.get("filename", "")
+            # Resolve the correct directory for this note's domain
+            domain_key = note.get("_domain_key", note.get("domain", "general"))
+            domain_cfg = config.knowledge.get_domain(domain_key)
+            topic_dir = domain_cfg.notes_directory
+            filepath = f"{topic_dir}/{note.get('filename', '')}"
 
             matches.append(KnowledgeMatch(
                 source_type="note",

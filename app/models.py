@@ -24,7 +24,7 @@ class TriageResult(BaseModel):
 
     domain: str | None = Field(
         default=None,
-        description="Knowledge domain (e.g. 'engineering', 'hr', 'finance')",
+        description="Knowledge domain — must match a configured domain key",
     )
 
     tags: list[str] = Field(

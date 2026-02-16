@@ -303,6 +303,27 @@ AZURE_OPENAI_API_KEY=your-key-here
 - **Added**: `tests/test_web.py` — 12 tests covering web module imports, `format_workflow_output` (empty, question, low-confidence, web search, ingestion badges, source deduplication), and `web_runner` entry point
 - **Added**: `test_fetch_url_js_only_page` test in `test_url_scraper.py`
 
+### 2026-02-16 (Claude Opus 4.6 w/AIAgentExpert)
+- **Added**: Ingestion preview refinement mode — when a pending ingestion preview exists, subsequent chat messages are routed to the ingestion preview agent as feedback to modify/extend the preview instead of running the full workflow
+  - Added `refine_ingestion_preview()` async function in `app/agents/ingestion_preview.py`
+  - Web UI shows a refinement-mode banner when pending previews exist
+  - Refined previews replace the current pending ingestion in-place
+  - Approve or Dismiss the preview to return to normal chat mode
+- **Added**: Configurable knowledge domains with per-domain stores, templates, and context files
+- **Added**: Multi-provider LLM support (Ollama, OpenAI, Azure OpenAI) via `config.yaml`
+- **Added**: Domain validation and auto-initialization on startup (CLI prompt, web auto-init)
+- **Added**: Per-domain note templates generated from base template with customized frontmatter
+- **Added**: Ingestion approve/dismiss buttons in web UI for executing proposed knowledge writes
+- **Added**: OpenTelemetry tracing support via `app/tracing.py`
+- **Fixed**: Dynamic domain injection into triage and ingestion preview agents (no more hardcoded domain lists)
+- **Fixed**: Ingestion preview JSON parser — handles nested braces, tool-call format, and `name→action` normalization
+- **Fixed**: HTML rendering in chat history replay (`unsafe_allow_html=True`)
+- **Fixed**: Template formatting in ingestion preview — loads domain template body and injects into prompt
+- **Fixed**: Ingestion approval not writing to knowledge store — tool functions had their own confidence/relevance threshold checks that blocked writes even after user approval; added `approved` parameter to bypass gating when called from `execute_ingestion()`
+- **Updated**: `docs/architecture.md` — rewritten with current WorkflowBuilder graph, per-domain knowledge stores, ingestion approval/refinement flow, multi-provider LLM, and tracing
+- **Updated**: `docs/SRS.md` — rewritten to reflect current executor pattern, session state, data flows, tech stack, knowledge store design, and API interfaces
+- **Updated**: `.github/copilot-instructions.md` — rewritten with current WorkflowBuilder architecture, executor pattern, per-domain knowledge structure, and ingestion preview → approval flow
+
 ### 2026-02-13 (Claude Opus 4.6 w/AIAgentExpert)
 - **Architecture**: Migrated from coordinator-agent-as-tool pattern to WorkflowBuilder graph
   - New flow: Triage → KnowledgeLookup → QuestionHandler / IngestionPreview → ResponseFormatter

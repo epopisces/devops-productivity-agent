@@ -6,25 +6,43 @@ logging:
   level: "INFO"  # Set to DEBUG to see agent handoffs and tool calls
   file: null     # Optional: path to log file (e.g., "logs/workflow.log")
 
+# =============================================================================
+# Model Providers — define interfaces and available models
+# =============================================================================
 models:
-  # LLM provider: "ollama" (local/default) or "azure_openai" (cloud)
-  provider: "ollama"
+  # Which provider to use by default
+  default_provider: "ollama"
 
-  # Ollama settings for local inference
-  ollama:
-    host: "http://localhost:11434"
-    # Recommended models for tool calling (knowledge ingestion, etc.):
-    #   - ministral-3:8b (excellent tool calling, needs a beefy system + GPU to be performant)
-    #   - llama3.1:8b (good tool calling, needs ~6GB RAM)
-    #   - llama3.2:3b (lightweight, good balance, needs ~2GB RAM)
-    #   - qwen3:4b (excellent tool calling, needs ~4GB RAM)
-    model_id: "llama3.1:8b"
+  providers:
+    # Ollama — local inference
+    ollama:
+      host: "http://localhost:11434"
+      default_model: "llama3.1:8b"
+      models:
+        - id: "llama3.1:8b"
+          description: "Good tool calling, ~6GB RAM"
+        - id: "llama3.2:3b"
+          description: "Lightweight, good balance, ~2GB RAM"
+        - id: "qwen3:4b"
+          description: "Excellent tool calling, ~4GB RAM"
 
-  # Azure OpenAI settings (used when provider is "azure_openai")
-  # Authenticate via DefaultAzureCredential (az login, managed identity, etc.)
-  azure_openai:
-    endpoint: null      # or set AZURE_OPENAI_ENDPOINT env var
-    deployment_name: null  # or set AZURE_OPENAI_DEPLOYMENT env var
+    # OpenAI — cloud API  (uncomment to enable)
+    # openai:
+    #   api_key: null  # or set OPENAI_API_KEY env var
+    #   default_model: "gpt-4o-mini"
+    #   models:
+    #     - id: "gpt-4o"
+    #       description: "Best quality"
+    #     - id: "gpt-4o-mini"
+    #       description: "Fast and cheap"
+
+    # Azure OpenAI — enterprise cloud  (uncomment to enable)
+    # azure_openai:
+    #   endpoint: null  # or set AZURE_OPENAI_ENDPOINT env var
+    #   default_model: null  # deployment name
+    #   models:
+    #     - id: "gpt-4o"
+    #       description: "Azure-hosted GPT-4o"
 
 agents:
   triage:
@@ -50,32 +68,62 @@ scraper:
   # Maximum content length to process (in characters)
   max_content_length: 50000
 
-# Knowledge Ingestion Agent configuration
+# =============================================================================
+# Knowledge Domains — each domain has its own store
+# =============================================================================
+# Knowledge data lives OUTSIDE the app repo by default (../knowledge/)
+# so code and data can be versioned independently.
 knowledge:
   # Confidence threshold for human review (0.0 - 1.0)
-  # Content with confidence below this requires human approval before storing
   confidence_threshold: 0.7
-  
   # Relevance threshold for human review (0.0 - 1.0)
-  # Content with relevance below this requires human approval before storing
   relevance_threshold: 0.6
-  
-  # Org context file path (high-level org context summaries)
-  context_file: "knowledge/context.md"
-  
-  # Org URL index file path (index of org-relevant URLs with metadata)
-  url_index_file: "knowledge/sources/url_index.yaml"
-  
-  # User notes configuration by topic
-  # Each topic has: directory, template file, and description
-  notes_topics:
-    default:
-      directory: "knowledge/notes"
-      template: "config/templates/note_template.md"
+
+  # Define your knowledge domains here.
+  # Each domain gets its own notes directory, context file, URL index, and template.
+  # Example domains: general, social, technology, entertainment.  Feel free to customize!
+  domains:
+    general:
       description: "General notes and documentation"
-      # Frontmatter defaults for this topic
+      notes_directory: "../knowledge/general/notes"
+      context_file: "../knowledge/general/context.md"
+      url_index_file: "../knowledge/general/url_index.yaml"
+      template: "../knowledge/general/note_template.md"
       frontmatter_defaults:
         category: "general"
+        priority: "medium"
+        reviewed: false
+
+    social:
+      description: "Social and people-related knowledge"
+      notes_directory: "../knowledge/social/notes"
+      context_file: "../knowledge/social/context.md"
+      url_index_file: "../knowledge/social/url_index.yaml"
+      template: "../knowledge/social/note_template.md"
+      frontmatter_defaults:
+        category: "social"
+        priority: "medium"
+        reviewed: false
+    
+    technology:
+      description: "Technology-related knowledge"
+      notes_directory: "../knowledge/technology/notes"
+      context_file: "../knowledge/technology/context.md"
+      url_index_file: "../knowledge/technology/url_index.yaml"
+      template: "../knowledge/technology/note_template.md"
+      frontmatter_defaults:
+        category: "technology"
+        priority: "medium"
+        reviewed: false
+
+    entertainment:
+      description: "Entertainment-related knowledge"
+      notes_directory: "../knowledge/entertainment/notes"
+      context_file: "../knowledge/entertainment/context.md"
+      url_index_file: "../knowledge/entertainment/url_index.yaml"
+      template: "../knowledge/entertainment/note_template.md"
+      frontmatter_defaults:
+        category: "entertainment"
         priority: "medium"
         reviewed: false
 
@@ -101,7 +149,7 @@ tracing:
   # OTLP gRPC endpoint (AI Toolkit default)
   otlp_endpoint: "http://localhost:4317"
   # Capture prompts and completions in traces (may contain sensitive data)
-  enable_sensitive_data: false
+  enable_sensitive_data: true
 
 # Progress indicator configuration
 progress:
@@ -115,3 +163,10 @@ progress:
   show_elapsed: true
   # For streaming: seconds of idle before showing "still working" message
   streaming_idle_threshold: 5.0
+
+# =============================================================================
+# UI Preferences
+# =============================================================================
+ui:
+  # Color theme: "dark" or "light"
+  theme: "dark"

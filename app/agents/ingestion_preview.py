@@ -11,6 +11,7 @@ Actual writes are deferred to user approval in the UI layer.
 import json
 import logging
 import re
+from pathlib import Path
 
 from agent_framework import ChatAgent, Executor, WorkflowContext, handler
 
@@ -45,7 +46,7 @@ Output ONLY a JSON object:
 {
   "action": "create_note" | "update_note" | "add_url" | "update_context" | "skip",
   "title": "Proposed title",
-  "domain": "engineering",
+  "domain": "general",
   "tags": ["tag1", "tag2"],
   "preview_content": "The actual content to store (markdown for notes, summary for URLs)",
   "target_path": "knowledge/notes/filename.md or 'url_index' or 'context.md'",
@@ -75,6 +76,22 @@ class IngestionPreviewExecutor(Executor):
         if instructions is None:
             instructions = _FALLBACK_INSTRUCTIONS
 
+        # Inject configured domain names so the LLM picks valid domains
+        domain_lines = []
+        for dname, dcfg in config.knowledge.domains.items():
+            desc = dcfg.description or dname
+            domain_lines.append(f"- **{dname}**: {desc}")
+        domain_list = "\n".join(domain_lines) if domain_lines else "- general"
+
+        try:
+            instructions = instructions.format(
+                domain_list=domain_list,
+                confidence_threshold=config.knowledge.confidence_threshold,
+                relevance_threshold=config.knowledge.relevance_threshold,
+            )
+        except KeyError:
+            pass
+
         self.agent = client.as_agent(
             name=config.agents.ingestion_preview.name,
             description=config.agents.ingestion_preview.description,
@@ -88,6 +105,7 @@ class IngestionPreviewExecutor(Executor):
         self, lookup: LookupResult, ctx: WorkflowContext[IngestionPreviewResult]
     ) -> None:
         """Analyze content and propose an ingestion action."""
+        config = get_config()
         content = lookup.triage.raw_content or lookup.triage.cleaned_query or ""
         logger.info(f"[INGESTION] Analyzing: {content[:100]}...")
 
@@ -110,6 +128,26 @@ class IngestionPreviewExecutor(Executor):
                     f"- **{match.get('title', 'Untitled')}** "
                     f"({match.get('source_type', '?')}): "
                     f"{match.get('summary', 'N/A')}\n"
+                )
+
+        # Load the domain template so the LLM uses its structure
+        domain_key = lookup.triage.domain or "general"
+        domain_cfg = config.knowledge.get_domain(domain_key)
+        project_root = Path(__file__).parent.parent.parent
+        tmpl_path = project_root / domain_cfg.template
+        if tmpl_path.exists():
+            tmpl_text = tmpl_path.read_text(encoding="utf-8")
+            # Strip the frontmatter — we only want the body structure
+            body_match = re.search(r'^---\n.*?\n---\n+(.+)', tmpl_text, re.DOTALL)
+            if body_match:
+                tmpl_body = body_match.group(1).strip()
+                prompt_parts.append(
+                    f"\n## Note Template (use this structure for preview_content)\n"
+                    f"```markdown\n{tmpl_body}\n```\n"
+                    f"\nIMPORTANT: When the action is `create_note`, format `preview_content` "
+                    f"using the section headings from the template above. Fill in each section "
+                    f"with the relevant information extracted from the user's content. "
+                    f"Do NOT just echo back the raw user input.\n"
                 )
 
         prompt_parts.append(
@@ -140,16 +178,50 @@ class IngestionPreviewExecutor(Executor):
         """Parse the agent's response into an IngestionPreviewResult."""
         config = get_config()
 
-        # Try to extract JSON
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', raw_text, re.DOTALL)
-        if not json_match:
-            json_match = re.search(r'\{[^{}]*"action"[^{}]*\}', raw_text, re.DOTALL)
+        data: dict | None = None
 
+        # Strategy 1: fenced ```json ... ``` block (greedy to handle nested braces)
+        json_match = re.search(r'```json\s*(\{.*\})\s*```', raw_text, re.DOTALL)
         if json_match:
             try:
-                json_str = json_match.group(1) if '```' in json_match.group(0) else json_match.group(0)
-                data = json.loads(json_str)
+                data = json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
 
+        # Strategy 2: find the outermost { ... } in the text
+        if data is None:
+            # Walk forward to find balanced braces
+            start = raw_text.find('{')
+            if start != -1:
+                depth = 0
+                end = start
+                for i, ch in enumerate(raw_text[start:], start):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                try:
+                    data = json.loads(raw_text[start:end])
+                except json.JSONDecodeError:
+                    pass
+
+        # Unwrap tool-call format: {"name": "...", "parameters": {...}}
+        if data and "parameters" in data and isinstance(data["parameters"], dict):
+            inner = data["parameters"]
+            # Carry over name → action if inner doesn't have action
+            if "action" not in inner and "name" in data:
+                inner["action"] = data["name"]
+            data = inner
+
+        # Normalise "name" → "action" at top level too
+        if data and "action" not in data and "name" in data:
+            data["action"] = data.pop("name")
+
+        if data and ("action" in data or "preview_content" in data):
+            try:
                 conf = float(data.get("confidence", 0.8))
                 rel = float(data.get("relevance", 0.8))
                 requires_review = (
@@ -189,3 +261,90 @@ class IngestionPreviewExecutor(Executor):
             review_reason="Could not parse LLM output; manual review recommended",
             triage=lookup.triage,
         )
+
+
+# ── Standalone refinement helper ───────────────────────────────────────────
+
+async def refine_ingestion_preview(
+    current: IngestionPreviewResult,
+    user_feedback: str,
+) -> IngestionPreviewResult:
+    """Refine an existing ingestion preview based on user feedback.
+
+    Creates a fresh ChatAgent, sends the current preview + user feedback,
+    parses the updated JSON response, and returns a new IngestionPreviewResult.
+    Fields not present in the LLM response are carried over from *current*.
+    """
+    config = get_config()
+    client = create_chat_client(purpose="ingestion_preview_refine")
+
+    instructions = load_instructions(
+        config.agents.ingestion_preview.instructions_file
+    )
+    if instructions is None:
+        instructions = _FALLBACK_INSTRUCTIONS
+
+    # Inject domain list & thresholds
+    domain_lines = []
+    for dname, dcfg in config.knowledge.domains.items():
+        desc = dcfg.description or dname
+        domain_lines.append(f"- **{dname}**: {desc}")
+    domain_list = "\n".join(domain_lines) if domain_lines else "- general"
+    try:
+        instructions = instructions.format(
+            domain_list=domain_list,
+            confidence_threshold=config.knowledge.confidence_threshold,
+            relevance_threshold=config.knowledge.relevance_threshold,
+        )
+    except KeyError:
+        pass
+
+    agent = client.as_agent(
+        name="ingestion_preview_refine",
+        description="Refine a proposed ingestion preview based on user feedback.",
+        instructions=instructions,
+    )
+
+    # Build the refinement prompt
+    current_json = current.model_dump_json(indent=2)
+    prompt = (
+        "## Current Ingestion Preview\n"
+        f"```json\n{current_json}\n```\n\n"
+        "## User Feedback\n"
+        f"{user_feedback}\n\n"
+        "Apply the user's feedback to the preview above and output ONLY "
+        "the updated JSON object with the same fields: action, title, domain, "
+        "tags, preview_content, target_path, confidence, relevance.\n"
+        "Keep any fields the user did not mention unchanged."
+    )
+
+    response = await agent.run(prompt)
+    raw_text = response.text.strip()
+    logger.debug(f"[INGESTION-REFINE] Raw response: {raw_text[:300]}...")
+
+    # Re-use the executor's parser via a temporary instance
+    dummy_lookup = LookupResult(
+        triage=current.triage,
+        matches=current.related_existing,
+    )
+    executor = IngestionPreviewExecutor.__new__(IngestionPreviewExecutor)
+    refined = executor._parse_response(raw_text, dummy_lookup)
+
+    # Carry over fields that the LLM may have omitted
+    if not refined.title or refined.title == "Untitled Note":
+        refined.title = current.title
+    if refined.domain == "general" and current.domain != "general":
+        refined.domain = current.domain
+    if not refined.tags and current.tags:
+        refined.tags = current.tags
+    if not refined.target_path and current.target_path:
+        refined.target_path = current.target_path
+    # Preserve triage from original
+    refined.triage = current.triage
+    refined.related_existing = current.related_existing
+
+    logger.info(
+        f"[INGESTION-REFINE] Refined: action={refined.action}, "
+        f"title='{refined.title}'"
+    )
+    return refined

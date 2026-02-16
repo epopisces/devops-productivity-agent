@@ -22,14 +22,14 @@ _FALLBACK_INSTRUCTIONS = """\
 You are a Triage agent. Classify the user's intent and extract metadata.
 
 Your job is to analyze the user's input and output ONLY a JSON object:
-{
+{{
   "intent": "question" | "ingestion" | "both",
-  "domain": "<knowledge domain or null>",
+  "domain": "<one of the configured knowledge domains>",
   "tags": ["tag1", "tag2"],
   "cleaned_query": "<the question, if any>",
   "raw_content": "<content to ingest, if any>",
   "source_url": "<URL if user provided one, else null>"
-}
+}}
 
 Guidelines:
 - "question": the user is asking a question or requesting information
@@ -37,6 +37,11 @@ Guidelines:
 - "both": the user is providing info AND asking a question about it
 - Extract tags that would help find relevant knowledge (technologies, concepts, teams)
 - If a URL is present, include it in source_url
+
+## Available Domains
+{domain_list}
+
+You MUST choose one of the domains listed above.
 """
 
 
@@ -64,6 +69,19 @@ class TriageExecutor(Executor):
             available = get_available_tags()
         except Exception:
             available = "No tags available yet."
+
+        # Build domain list from config so the LLM picks valid domains
+        domain_lines = []
+        for dname, dcfg in config.knowledge.domains.items():
+            desc = dcfg.description or dname
+            domain_lines.append(f"- **{dname}**: {desc}")
+        domain_list = "\n".join(domain_lines) if domain_lines else "- general"
+
+        # Format placeholders in instructions
+        try:
+            instructions = instructions.format(domain_list=domain_list)
+        except KeyError:
+            pass  # template may not have the placeholder yet
 
         full_instructions = (
             f"{instructions}\n\n"

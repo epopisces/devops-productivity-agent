@@ -28,7 +28,7 @@ class URLIndexEntry(BaseModel):
     """Entry in the URL index."""
     url: str
     title: str
-    domain: str = Field(description="Domain of knowledge (e.g., 'engineering', 'hr', 'finance')")
+    domain: str = Field(description="Domain of knowledge — must match a configured domain key")
     context: str = Field(description="Brief context about why this URL is relevant")
     summary: str = Field(description="Content summary")
     tags: list[str] = Field(default_factory=list)
@@ -82,12 +82,12 @@ def _ensure_directory(path: Path) -> None:
 
 
 def _update_notes_index(topic: str, metadata: NoteMetadata, filename: str) -> None:
-    """Update the notes index for a topic after creating/updating a note."""
+    """Update the notes index for a domain after creating/updating a note."""
     config = get_config()
     project_root = _get_project_root()
 
-    topic_config = config.knowledge.notes_topics.get(topic, config.knowledge.notes_topics["default"])
-    notes_dir = project_root / topic_config.directory
+    domain_config = config.knowledge.get_domain(topic)
+    notes_dir = project_root / domain_config.notes_directory
     index_path = notes_dir / "_index.yaml"
 
     index_data: list[dict] = []
@@ -118,7 +118,7 @@ def _update_notes_index(topic: str, metadata: NoteMetadata, filename: str) -> No
 
     with open(index_path, "w", encoding="utf-8") as f:
         yaml.dump(
-            {"topic": topic, "description": topic_config.description, "notes": index_data},
+            {"domain": topic, "description": domain_config.description, "notes": index_data},
             f, default_flow_style=False, sort_keys=False,
         )
 
@@ -131,12 +131,13 @@ def _update_notes_index(topic: str, metadata: NoteMetadata, filename: str) -> No
 def add_url_to_index(
     url: Annotated[str, Field(description="The URL to add to the index")],
     title: Annotated[str, Field(description="Title of the page")],
-    domain: Annotated[str, Field(description="Domain of knowledge (e.g., 'engineering', 'hr', 'finance')")],
+    domain: Annotated[str, Field(description="Domain of knowledge — must match a configured domain key")],
     context: Annotated[str, Field(description="Brief context about why this URL is relevant to the org")],
     summary: Annotated[str, Field(description="Summary of the content")],
     tags: Annotated[str, Field(description="Comma-separated list of tags")] = "",
     confidence: Annotated[float, Field(description="Confidence score 0.0-1.0")] = 1.0,
     relevance: Annotated[float, Field(description="Relevance score 0.0-1.0")] = 1.0,
+    approved: bool = False,
 ) -> str:
     """Add a URL entry to the organizational URL index.
 
@@ -149,14 +150,15 @@ def add_url_to_index(
         tags: Comma-separated tags.
         confidence: Confidence in the content quality (0.0-1.0).
         relevance: Relevance to the organization (0.0-1.0).
+        approved: If True, skip threshold checks (user already approved).
 
     Returns:
         Status message indicating success or failure.
     """
-    logger.info(f"[TOOL CALL] add_url_to_index: {url}")
+    logger.info(f"[TOOL CALL] add_url_to_index: {url} (approved={approved})")
     config = get_config()
 
-    if confidence < config.knowledge.confidence_threshold or relevance < config.knowledge.relevance_threshold:
+    if not approved and (confidence < config.knowledge.confidence_threshold or relevance < config.knowledge.relevance_threshold):
         review_reasons = []
         if confidence < config.knowledge.confidence_threshold:
             review_reasons.append(f"confidence ({confidence:.2f}) below threshold ({config.knowledge.confidence_threshold})")
@@ -171,7 +173,8 @@ def add_url_to_index(
 
     try:
         project_root = _get_project_root()
-        index_path = project_root / config.knowledge.url_index_file
+        domain_config = config.knowledge.get_domain(domain)
+        index_path = project_root / domain_config.url_index_file
         _ensure_directory(index_path.parent)
 
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
@@ -213,6 +216,7 @@ def update_instructions_file(
     action: Annotated[Literal["append", "replace"], Field(description="Whether to append to or replace the section")] = "append",
     confidence: Annotated[float, Field(description="Confidence score 0.0-1.0")] = 1.0,
     relevance: Annotated[float, Field(description="Relevance score 0.0-1.0")] = 1.0,
+    approved: bool = False,
 ) -> str:
     """Update the organizational instructions file with new context.
 
@@ -222,14 +226,15 @@ def update_instructions_file(
         action: Whether to 'append' to existing content or 'replace' it.
         confidence: Confidence in the content accuracy (0.0-1.0).
         relevance: Relevance to the organization (0.0-1.0).
+        approved: If True, skip threshold checks (user already approved).
 
     Returns:
         Status message indicating success or failure.
     """
-    logger.info(f"[TOOL CALL] update_instructions_file: section='{section}', action={action}")
+    logger.info(f"[TOOL CALL] update_instructions_file: section='{section}', action={action} (approved={approved})")
     config = get_config()
 
-    if confidence < config.knowledge.confidence_threshold or relevance < config.knowledge.relevance_threshold:
+    if not approved and (confidence < config.knowledge.confidence_threshold or relevance < config.knowledge.relevance_threshold):
         review_reasons = []
         if confidence < config.knowledge.confidence_threshold:
             review_reasons.append(f"confidence ({confidence:.2f}) below threshold ({config.knowledge.confidence_threshold})")
@@ -244,7 +249,9 @@ def update_instructions_file(
 
     try:
         project_root = _get_project_root()
-        context_path = project_root / config.knowledge.context_file
+        # Write to the first (default) domain's context file
+        default_domain = next(iter(config.knowledge.domains.values()))
+        context_path = project_root / default_domain.context_file
         _ensure_directory(context_path.parent)
 
         if context_path.exists():
@@ -292,36 +299,36 @@ def update_instructions_file(
 def create_note(
     title: Annotated[str, Field(description="Title of the note")],
     content: Annotated[str, Field(description="Main content of the note in markdown format")],
-    topic: Annotated[str, Field(description="Topic/category key from config (e.g., 'default')")] = "default",
-    domain: Annotated[str, Field(description="Domain of knowledge (e.g., 'engineering', 'processes')")] = "general",
+    domain: Annotated[str, Field(description="Domain key from config (e.g., 'general', 'social')")] = "general",
     category: Annotated[str, Field(description="Category for the note")] = "general",
     tags: Annotated[str, Field(description="Comma-separated list of tags")] = "",
     summary: Annotated[str, Field(description="Brief summary of the note")] = "",
     source_url: Annotated[str | None, Field(description="Source URL if content was extracted from web")] = None,
     confidence: Annotated[float, Field(description="Confidence score 0.0-1.0")] = 1.0,
     relevance: Annotated[float, Field(description="Relevance score 0.0-1.0")] = 1.0,
+    approved: bool = False,
 ) -> str:
     """Create a new note file with frontmatter metadata.
 
     Args:
         title: Note title (used for filename).
         content: Markdown content of the note.
-        topic: Topic key for organizing notes.
-        domain: Knowledge domain.
+        domain: Knowledge domain key matching config.
         category: Note category.
         tags: Comma-separated tags.
         summary: Brief summary.
         source_url: Optional source URL.
         confidence: Confidence in content accuracy (0.0-1.0).
         relevance: Relevance to organization (0.0-1.0).
+        approved: If True, skip threshold checks (user already approved).
 
     Returns:
         Status message with file path or error.
     """
-    logger.info(f"[TOOL CALL] create_note: title='{title}', topic={topic}")
+    logger.info(f"[TOOL CALL] create_note: title='{title}', domain={domain} (approved={approved})")
     config = get_config()
 
-    if confidence < config.knowledge.confidence_threshold or relevance < config.knowledge.relevance_threshold:
+    if not approved and (confidence < config.knowledge.confidence_threshold or relevance < config.knowledge.relevance_threshold):
         review_reasons = []
         if confidence < config.knowledge.confidence_threshold:
             review_reasons.append(f"confidence ({confidence:.2f}) below threshold ({config.knowledge.confidence_threshold})")
@@ -336,13 +343,8 @@ def create_note(
 
     try:
         project_root = _get_project_root()
-
-        if topic not in config.knowledge.notes_topics:
-            logger.warning(f"Topic '{topic}' not found, using 'default'")
-            topic = "default"
-
-        topic_config = config.knowledge.notes_topics[topic]
-        notes_dir = project_root / topic_config.directory
+        domain_config = config.knowledge.get_domain(domain)
+        notes_dir = project_root / domain_config.notes_directory
         _ensure_directory(notes_dir)
 
         safe_title = re.sub(r'[^\w\s-]', '', title.lower())
@@ -358,7 +360,7 @@ def create_note(
 
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
-        defaults = topic_config.frontmatter_defaults
+        defaults = domain_config.frontmatter_defaults
 
         metadata = NoteMetadata(
             title=title,
@@ -379,7 +381,7 @@ def create_note(
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(file_content)
 
-        _update_notes_index(topic, metadata, filename)
+        _update_notes_index(domain, metadata, filename)
 
         relative_path = filepath.relative_to(project_root)
         logger.info(f"[TOOL RESULT] create_note completed: {relative_path}")
@@ -403,34 +405,37 @@ def get_knowledge_status() -> str:
 
     status_parts = []
 
-    context_path = project_root / config.knowledge.context_file
-    if context_path.exists():
-        with open(context_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        sections = re.findall(r"^## (.+)$", content, re.MULTILINE)
-        status_parts.append(f"Context File: {len(sections)} sections - {', '.join(sections)}")
-    else:
-        status_parts.append("Context File: Not created yet")
+    for domain_key, domain_config in config.knowledge.domains.items():
+        # Context file status
+        context_path = project_root / domain_config.context_file
+        if context_path.exists():
+            with open(context_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            sections = re.findall(r"^## (.+)$", content, re.MULTILINE)
+            status_parts.append(f"[{domain_key}] Context: {len(sections)} sections - {', '.join(sections)}")
+        else:
+            status_parts.append(f"[{domain_key}] Context: Not created yet")
 
-    url_index_path = project_root / config.knowledge.url_index_file
-    if url_index_path.exists():
-        with open(url_index_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        url_count = len(data.get("urls", []))
-        status_parts.append(f"URL Index: {url_count} URLs indexed")
-    else:
-        status_parts.append("URL Index: Not created yet")
+        # URL index status
+        url_index_path = project_root / domain_config.url_index_file
+        if url_index_path.exists():
+            with open(url_index_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            url_count = len(data.get("urls", []))
+            status_parts.append(f"[{domain_key}] URLs: {url_count} indexed")
+        else:
+            status_parts.append(f"[{domain_key}] URLs: Not created yet")
 
-    for topic, topic_config in config.knowledge.notes_topics.items():
-        notes_dir = project_root / topic_config.directory
+        # Notes index status
+        notes_dir = project_root / domain_config.notes_directory
         index_path = notes_dir / "_index.yaml"
         if index_path.exists():
             with open(index_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             note_count = len(data.get("notes", []))
-            status_parts.append(f"Notes ({topic}): {note_count} notes in {topic_config.directory}/")
+            status_parts.append(f"[{domain_key}] Notes: {note_count} in {domain_config.notes_directory}/")
         else:
-            status_parts.append(f"Notes ({topic}): No notes yet in {topic_config.directory}/")
+            status_parts.append(f"[{domain_key}] Notes: None yet in {domain_config.notes_directory}/")
 
     status_parts.append(
         f"\nThresholds - Confidence: {config.knowledge.confidence_threshold}, "

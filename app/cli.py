@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 
-from app.config import get_config
+from app.config import get_config, validate_knowledge_domains, initialize_domain
 from app.logging_config import setup_logging, LOGGER_ROOT
 from app.metrics import configure_metrics, get_metrics_collector
 from app.models import WorkflowOutput, QuestionResult, IngestionPreviewResult
@@ -43,10 +43,10 @@ def print_config():
     print(f"Provider: {config.models.provider}")
     if config.models.provider == "ollama":
         print(f"Ollama Host: {config.models.ollama.host}")
-        print(f"Model: {config.models.ollama.model_id}")
+        print(f"Model: {config.models.get_active_model_id()}")
     else:
         print(f"Azure OpenAI Endpoint: {config.models.azure_openai.endpoint}")
-        print(f"Deployment: {config.models.azure_openai.deployment_name}")
+        print(f"Deployment: {config.models.get_active_model_id()}")
     print(f"Scraper Timeout: {config.scraper.timeout}s")
     print(f"Log Level: {logging.getLevelName(root_logger.level)}")
     print(f"Metrics: {'enabled' if config.metrics.enabled else 'disabled'}")
@@ -145,11 +145,7 @@ async def chat_loop(workflow):
                 
                 # Record metrics
                 duration = time.time() - start_time
-                model_id = (
-                    config.models.ollama.model_id
-                    if config.models.provider == "ollama"
-                    else config.models.azure_openai.deployment_name or "azure"
-                )
+                model_id = config.models.get_active_model_id()
                 metrics_collector.record(
                     operation="query",
                     agent="workflow",
@@ -162,11 +158,7 @@ async def chat_loop(workflow):
                 
             except Exception as e:
                 duration = time.time() - start_time if 'start_time' in dir() else 0
-                model_id = (
-                    config.models.ollama.model_id
-                    if config.models.provider == "ollama"
-                    else config.models.azure_openai.deployment_name or "azure"
-                )
+                model_id = config.models.get_active_model_id()
                 metrics_collector.record(
                     operation="query",
                     agent="workflow",
@@ -192,7 +184,7 @@ async def chat_loop(workflow):
                     print(f"\n\nError: {e}")
                     print("Check that the LLM provider is running and accessible.")
                     if config.models.provider == "ollama":
-                        print(f"Try: ollama pull {config.models.ollama.model_id}\n")
+                        print(f"Try: ollama pull {config.models.get_active_model_id()}\n")
                 
         except KeyboardInterrupt:
             print("\n\nInterrupted. Type /quit to exit.\n")
@@ -256,13 +248,31 @@ async def async_main():
     
     # Configure tracing
     configure_tracing(config.tracing)
-    
+
+    # Validate knowledge domains
+    domain_results = validate_knowledge_domains(config)
+    uninitialized = [r for r in domain_results if not r.ok]
+    if uninitialized:
+        print("\n⚠  Some knowledge domains are not initialized:")
+        for result in uninitialized:
+            print(f"   • {result.key}: missing {', '.join(result.missing)}")
+        answer = input("\nCreate missing folders/files now? [Y/n] ").strip().lower()
+        if answer in ("", "y", "yes"):
+            for result in uninitialized:
+                created = initialize_domain(result.key, config.knowledge.domains[result.key])
+                for p in created:
+                    print(f"   ✓ Created {p}")
+            print()
+        else:
+            print("  Skipped — you can create them later.\n")
+
     provider = config.models.provider
+    model_id = config.models.get_active_model_id()
     if provider == "ollama":
         print(f"\nConnecting to Ollama at {config.models.ollama.host}...")
-        print(f"Using model: {config.models.ollama.model_id}")
+        print(f"Using model: {model_id}")
     else:
-        print(f"\nUsing Azure OpenAI deployment: {config.models.azure_openai.deployment_name}")
+        print(f"\nUsing {provider} model: {model_id}")
     print(f"Logging level: {config.logging.level}")
     
     try:
@@ -274,10 +284,10 @@ async def async_main():
         print("\nTroubleshooting:")
         if provider == "ollama":
             print("1. Make sure Ollama is running: ollama serve")
-            print(f"2. Pull the model: ollama pull {config.models.ollama.model_id}")
+            print(f"2. Pull the model: ollama pull {config.models.get_active_model_id()}")
         else:
-            print("1. Check Azure OpenAI endpoint and deployment")
-            print("2. Ensure authentication is configured (az login)")
+            print(f"1. Check {provider} configuration")
+            print("2. Ensure authentication is configured")
         print("3. Check your .env or config/config.yaml settings")
         sys.exit(1)
     
