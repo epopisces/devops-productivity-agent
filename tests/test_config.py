@@ -120,79 +120,43 @@ class TestAppConfig:
 class TestTracingConfig:
     """Tests for TracingConfig validation."""
     
-    def test_valid_endpoint_with_port(self):
-        """Test valid OTLP endpoint with explicit port."""
-        config = TracingConfig(otlp_endpoint="http://localhost:4317")
-        assert config.otlp_endpoint == "http://localhost:4317"
-        assert config.get_port() == 4317
-    
-    def test_valid_endpoint_https(self):
-        """Test valid HTTPS OTLP endpoint."""
-        config = TracingConfig(otlp_endpoint="https://otel.example.com:4318")
-        assert config.otlp_endpoint == "https://otel.example.com:4318"
-        assert config.get_port() == 4318
-    
-    def test_valid_endpoint_with_ip(self):
-        """Test valid OTLP endpoint with IP address."""
-        config = TracingConfig(otlp_endpoint="http://192.168.1.100:4317")
-        assert config.otlp_endpoint == "http://192.168.1.100:4317"
-        assert config.get_port() == 4317
-    
-    def test_endpoint_with_trailing_slash(self):
-        """Test endpoint with trailing slash - should validate but extract port correctly."""
-        config = TracingConfig(otlp_endpoint="http://localhost:4317/")
-        assert config.get_port() == 4317
-    
-    def test_endpoint_with_path(self):
-        """Test endpoint with path - should validate and extract port correctly."""
-        # Note: This produces a warning in logs but doesn't raise
-        config = TracingConfig(otlp_endpoint="http://localhost:4317/v1/traces")
-        assert config.get_port() == 4317
-    
-    def test_endpoint_with_query(self):
-        """Test endpoint with query parameters - should validate and extract port correctly."""
-        # Note: This produces a warning in logs but doesn't raise
-        config = TracingConfig(otlp_endpoint="http://localhost:4317?timeout=5000")
-        assert config.get_port() == 4317
-    
-    def test_endpoint_without_port_fails(self):
-        """Test that endpoint without explicit port raises ValueError."""
-        with pytest.raises(ValueError, match="must include an explicit port"):
-            TracingConfig(otlp_endpoint="http://localhost")
-    
-    def test_endpoint_without_port_with_path_fails(self):
-        """Test that endpoint without port but with path raises ValueError."""
-        with pytest.raises(ValueError, match="must include an explicit port"):
-            TracingConfig(otlp_endpoint="http://localhost/v1/traces")
-    
-    def test_endpoint_invalid_scheme_fails(self):
-        """Test that endpoint with invalid scheme raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid scheme"):
-            TracingConfig(otlp_endpoint="ftp://localhost:4317")
-    
-    def test_endpoint_no_scheme_fails(self):
-        """Test that endpoint without scheme raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid scheme"):
-            TracingConfig(otlp_endpoint="localhost:4317")
-    
-    def test_endpoint_invalid_port_range_fails(self):
-        """Test that endpoint with port out of range raises ValueError."""
-        # urlparse catches this with "Port out of range" message
-        with pytest.raises(ValueError, match="Port out of range|out of valid range"):
-            TracingConfig(otlp_endpoint="http://localhost:99999")
-    
-    def test_endpoint_port_zero_fails(self):
-        """Test that endpoint with port 0 raises ValueError."""
-        with pytest.raises(ValueError, match="out of valid range"):
-            TracingConfig(otlp_endpoint="http://localhost:0")
-    
-    def test_get_port_method(self):
-        """Test the get_port() convenience method."""
-        config = TracingConfig(otlp_endpoint="http://example.com:8080")
-        assert config.get_port() == 8080
-    
-    def test_default_endpoint_valid(self):
-        """Test that the default endpoint is valid."""
+    def test_valid_port_default(self):
+        """Test default port value."""
         config = TracingConfig()
-        assert config.otlp_endpoint == "http://localhost:4317"
-        assert config.get_port() == 4317
+        assert config.vs_code_extension_port == 4317
+    
+    def test_valid_port_custom(self):
+        """Test custom port value."""
+        config = TracingConfig(vs_code_extension_port=8080)
+        assert config.vs_code_extension_port == 8080
+    
+    def test_port_minimum_valid(self):
+        """Test minimum valid port (1)."""
+        config = TracingConfig(vs_code_extension_port=1)
+        assert config.vs_code_extension_port == 1
+    
+    def test_port_maximum_valid(self):
+        """Test maximum valid port (65535)."""
+        config = TracingConfig(vs_code_extension_port=65535)
+        assert config.vs_code_extension_port == 65535
+    
+    def test_port_zero_fails(self):
+        """Test that port 0 raises ValidationError."""
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            TracingConfig(vs_code_extension_port=0)
+    
+    def test_port_negative_fails(self):
+        """Test that negative port raises ValidationError."""
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            TracingConfig(vs_code_extension_port=-1)
+    
+    def test_port_too_large_fails(self):
+        """Test that port > 65535 raises ValidationError."""
+        with pytest.raises(ValueError, match="less than or equal to 65535"):
+            TracingConfig(vs_code_extension_port=99999)
+    
+    def test_port_type_coercion(self):
+        """Test that string port is coerced to int."""
+        config = TracingConfig(vs_code_extension_port="4317")
+        assert config.vs_code_extension_port == 4317
+        assert isinstance(config.vs_code_extension_port, int)

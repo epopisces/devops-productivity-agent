@@ -98,8 +98,8 @@ metrics:
 tracing:
   # Enable/disable tracing (set to true, then open AI Toolkit trace viewer)
   enabled: true
-  # OTLP gRPC endpoint (AI Toolkit default)
-  otlp_endpoint: "http://localhost:4317"
+  # Port number for AI Toolkit Agent Inspector (localhost only, default: 4317)
+  vs_code_extension_port: 4317
   # Capture prompts and completions in traces (may contain sensitive data)
   enable_sensitive_data: false
 

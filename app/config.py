@@ -4,11 +4,10 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 # Logger for this module
 logger = logging.getLogger("workflow.config")
@@ -137,89 +136,16 @@ class KnowledgeConfig(BaseModel):
 class TracingConfig(BaseModel):
     """OpenTelemetry tracing configuration."""
     enabled: bool = Field(default=False, description="Enable/disable OpenTelemetry tracing")
-    otlp_endpoint: str = Field(
-        default="http://localhost:4317",
-        description="OTLP gRPC endpoint (AI Toolkit default: localhost:4317)",
+    vs_code_extension_port: int = Field(
+        default=4317,
+        ge=1,
+        le=65535,
+        description="Port number for AI Toolkit Agent Inspector (default: 4317, localhost only)",
     )
     enable_sensitive_data: bool = Field(
         default=False,
         description="Capture prompts and completions in traces",
     )
-    
-    @field_validator("otlp_endpoint")
-    @classmethod
-    def validate_otlp_endpoint(cls, v: str) -> str:
-        """Validate OTLP endpoint URL and ensure it has a valid port.
-        
-        Args:
-            v: The OTLP endpoint URL string.
-            
-        Returns:
-            The validated endpoint URL.
-            
-        Raises:
-            ValueError: If the URL is invalid or missing a port.
-        """
-        try:
-            parsed = urlparse(v)
-            
-            # Check for valid scheme
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError(
-                    f"Invalid scheme '{parsed.scheme}'. OTLP endpoint must use http:// or https://"
-                )
-            
-            # Check for explicit port
-            if parsed.port is None:
-                raise ValueError(
-                    f"OTLP endpoint must include an explicit port number. "
-                    f"Got '{v}' which has no port. "
-                    f"Example: http://localhost:4317"
-                )
-            
-            # Validate port range
-            if not (1 <= parsed.port <= 65535):
-                raise ValueError(
-                    f"Port number {parsed.port} is out of valid range (1-65535)"
-                )
-            
-            # Warn about trailing paths/queries (though they're technically valid)
-            if parsed.path and parsed.path != "/":
-                logger.warning(
-                    f"OTLP endpoint has a path component '{parsed.path}'. "
-                    f"Most OTLP collectors expect just scheme://host:port"
-                )
-            
-            if parsed.query:
-                logger.warning(
-                    f"OTLP endpoint has query parameters. "
-                    f"Most OTLP collectors expect just scheme://host:port"
-                )
-            
-            return v
-            
-        except Exception as e:
-            raise ValueError(
-                f"Invalid OTLP endpoint URL '{v}': {e}. "
-                f"Expected format: http://host:port (e.g., http://localhost:4317)"
-            )
-    
-    def get_port(self) -> int:
-        """Extract the port number from the validated OTLP endpoint.
-        
-        Returns:
-            The port number as an integer.
-            
-        Raises:
-            ValueError: If the endpoint is invalid (should not happen after validation).
-        """
-        parsed = urlparse(self.otlp_endpoint)
-        if parsed.port is None:
-            # This should never happen after validation, but handle it defensively
-            raise ValueError(
-                f"OTLP endpoint '{self.otlp_endpoint}' has no port number"
-            )
-        return parsed.port
 
 
 class MetricsConfig(BaseModel):
