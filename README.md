@@ -277,6 +277,17 @@ AZURE_OPENAI_API_KEY=your-key-here
 # Changelog
 ---
 
+### 2026-02-16 (Claude Sonnet 4)
+- **Added**: `tests/test_tracing.py` — comprehensive unit tests for tracing module covering:
+  - Disabled-by-default behavior (when `enabled=False`)
+  - Successful tracing configuration with various endpoints (HTTP, HTTPS, custom ports)
+  - Sensitive data flag handling (both on and off)
+  - ImportError handling when `agent_framework.observability` module is missing
+  - General exception handling during tracing configuration
+  - Invalid endpoint URL validation (integration with TracingConfig validation)
+  - Port extraction from valid endpoints
+  - All 11 tests passing, following repository testing patterns
+
 ### 2026-02-15 (Claude Opus 4.6 w/AIAgentExpert)
 - **Added**: OpenTelemetry tracing support via Agent Framework's built-in `configure_otel_providers()`
   - New `app/tracing.py` module with `configure_tracing()` — auto-instruments chat clients, agents, and workflows (no manual spans needed)
